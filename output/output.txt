@@ -1,0 +1,3 @@
+Company Name: TECH ELECTRONICS
+Java Package Name: HMU3techElectronics.TnC.fromCSVtoRSXv7m7.po
+Author: Maryna Hybalo
