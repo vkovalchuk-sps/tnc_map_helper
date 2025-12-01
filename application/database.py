@@ -5,6 +5,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
+class DuplicateItemError(Exception):
+    """Exception raised when trying to create/update item with duplicate EDI combination"""
+    
+    def __init__(self, edi_segment: str, edi_element_number: int, edi_qualifier: str):
+        self.edi_segment = edi_segment
+        self.edi_element_number = edi_element_number
+        self.edi_qualifier = edi_qualifier
+        super().__init__()
+
+
 class Database:
     """Manages SQLite database operations"""
 
@@ -107,12 +117,38 @@ class Database:
                 is_on_detail_level INTEGER NOT NULL DEFAULT 0,
                 is_partnumber INTEGER NOT NULL DEFAULT 0,
                 "855_RSX_path" TEXT NOT NULL,
+                put_in_855_by_default INTEGER NOT NULL DEFAULT 0,
                 "856_RSX_path" TEXT NOT NULL,
+                put_in_856_by_default INTEGER NOT NULL DEFAULT 0,
                 "810_RSX_path" TEXT NOT NULL,
+                put_in_810_by_default INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (sourcing_group_properties_id) 
                     REFERENCES sourcing_group_properties(sourcing_group_properties_id)
             )
         """)
+
+        # Ensure optional boolean columns exist for older databases
+        additional_columns = [
+            ("put_in_855_by_default", "ALTER TABLE item_properties ADD COLUMN put_in_855_by_default INTEGER NOT NULL DEFAULT 0"),
+            ("put_in_856_by_default", "ALTER TABLE item_properties ADD COLUMN put_in_856_by_default INTEGER NOT NULL DEFAULT 0"),
+            ("put_in_810_by_default", "ALTER TABLE item_properties ADD COLUMN put_in_810_by_default INTEGER NOT NULL DEFAULT 0"),
+        ]
+        for column_name, ddl in additional_columns:
+            if not self._table_has_column(cursor, "item_properties", column_name):
+                cursor.execute(ddl)
+
+        # Create unique index for edi_segment, edi_element_number, edi_qualifier combination
+        # Note: Since we normalize edi_qualifier to empty string (not NULL) in create/update,
+        # we can create a simple unique index. The manual check in create/update methods
+        # provides additional validation.
+        try:
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_item_properties_unique_edi 
+                ON item_properties(edi_segment, edi_element_number, edi_qualifier)
+            """)
+        except sqlite3.Error:
+            # Index creation might fail if duplicates exist, but manual check will handle it
+            pass
 
         conn.commit()
         conn.close()
@@ -143,7 +179,16 @@ class Database:
         cursor.execute("SELECT * FROM order_path_properties ORDER BY order_path_properties_id")
         rows = cursor.fetchall()
         conn.close()
-        return [dict(row) for row in rows]
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["is_on_detail_level"] = bool(item.get("is_on_detail_level", 0))
+            item["is_partnumber"] = bool(item.get("is_partnumber", 0))
+            item["put_in_855_by_default"] = bool(item.get("put_in_855_by_default", 0))
+            item["put_in_856_by_default"] = bool(item.get("put_in_856_by_default", 0))
+            item["put_in_810_by_default"] = bool(item.get("put_in_810_by_default", 0))
+            result.append(item)
+        return result
 
     def get_order_path(self, path_id: int) -> Optional[Dict[str, Any]]:
         """Get order path property by ID"""
@@ -213,14 +258,37 @@ class Database:
         """Create a new sourcing group property"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO sourcing_group_properties 
-            (populate_method_name, map_name, order_path_properties_id, call_method_java_code)
-            VALUES (?, ?, ?, ?)
-            """,
-            (populate_method_name, map_name, order_path_properties_id, call_method_java_code),
-        )
+
+        has_call_method_path = self._table_has_column(cursor, "sourcing_group_properties", "call_method_path")
+        call_method_path = ""
+        if has_call_method_path:
+            call_method_path = self._get_order_path_value(cursor, order_path_properties_id)
+
+        if has_call_method_path:
+            cursor.execute(
+                """
+                INSERT INTO sourcing_group_properties 
+                (populate_method_name, map_name, order_path_properties_id, call_method_java_code, call_method_path)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    populate_method_name,
+                    map_name,
+                    order_path_properties_id,
+                    call_method_java_code,
+                    call_method_path,
+                ),
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO sourcing_group_properties 
+                (populate_method_name, map_name, order_path_properties_id, call_method_java_code)
+                VALUES (?, ?, ?, ?)
+                """,
+                (populate_method_name, map_name, order_path_properties_id, call_method_java_code),
+            )
+
         conn.commit()
         group_id = cursor.lastrowid
         conn.close()
@@ -278,18 +346,50 @@ class Database:
         """Update sourcing group property"""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute(
-            """
+
+        has_call_method_path = self._table_has_column(cursor, "sourcing_group_properties", "call_method_path")
+        params: List[Any] = [
+            populate_method_name,
+            map_name,
+            order_path_properties_id,
+            call_method_java_code,
+        ]
+        update_sql = """
             UPDATE sourcing_group_properties
             SET populate_method_name = ?, map_name = ?, order_path_properties_id = ?, call_method_java_code = ?
-            WHERE sourcing_group_properties_id = ?
-            """,
-            (populate_method_name, map_name, order_path_properties_id, call_method_java_code, group_id),
-        )
+        """
+
+        if has_call_method_path:
+            call_method_path = self._get_order_path_value(cursor, order_path_properties_id)
+            update_sql += ", call_method_path = ?"
+            params.append(call_method_path)
+
+        update_sql += " WHERE sourcing_group_properties_id = ?"
+        params.append(group_id)
+
+        cursor.execute(update_sql, params)
         conn.commit()
         success = cursor.rowcount > 0
         conn.close()
         return success
+
+    def _table_has_column(self, cursor, table_name: str, column_name: str) -> bool:
+        """Check if a table contains a specific column"""
+        try:
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = cursor.fetchall()
+            return any(col[1] == column_name for col in columns)
+        except sqlite3.Error:
+            return False
+
+    def _get_order_path_value(self, cursor, order_path_properties_id: int) -> str:
+        """Get order path string for given order_path_properties_id"""
+        cursor.execute(
+            "SELECT order_path FROM order_path_properties WHERE order_path_properties_id = ?",
+            (order_path_properties_id,),
+        )
+        row = cursor.fetchone()
+        return row[0] if row and row[0] is not None else ""
 
     def delete_sourcing_group(self, group_id: int) -> bool:
         """Delete sourcing group property"""
@@ -327,24 +427,44 @@ class Database:
         is_on_detail_level: bool,
         is_partnumber: bool,
         rsx_855_path: str,
+        put_in_855_by_default: bool,
         rsx_856_path: str,
+        put_in_856_by_default: bool,
         rsx_810_path: str,
+        put_in_810_by_default: bool,
     ) -> int:
         """Create a new item property"""
         conn = self.get_connection()
         cursor = conn.cursor()
+        
+        # Check for uniqueness: edi_segment, edi_element_number, edi_qualifier combination
+        # Normalize edi_qualifier: treat None and empty string as the same
+        normalized_qualifier = (edi_qualifier or "").strip()
+        
+        cursor.execute("""
+            SELECT item_properties_id FROM item_properties
+            WHERE edi_segment = ? AND edi_element_number = ?
+            AND COALESCE(edi_qualifier, '') = ?
+        """, (edi_segment, edi_element_number, normalized_qualifier))
+        
+        existing_item = cursor.fetchone()
+        if existing_item:
+            conn.close()
+            raise DuplicateItemError(edi_segment, edi_element_number, normalized_qualifier)
+        
         cursor.execute(
             """
             INSERT INTO item_properties 
             (edi_segment, edi_element_number, edi_qualifier, TLI_value,
              "850_RSX_tag", "850_TLI_tag", sourcing_group_properties_id,
-             is_on_detail_level, is_partnumber, "855_RSX_path", "856_RSX_path", "810_RSX_path")
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             is_on_detail_level, is_partnumber, "855_RSX_path", put_in_855_by_default,
+             "856_RSX_path", put_in_856_by_default, "810_RSX_path", put_in_810_by_default)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 edi_segment,
                 edi_element_number,
-                edi_qualifier or "",
+                normalized_qualifier or "",
                 TLI_value,
                 rsx_850_tag,
                 tli_850_tag,
@@ -352,8 +472,11 @@ class Database:
                 1 if is_on_detail_level else 0,
                 1 if is_partnumber else 0,
                 rsx_855_path,
+                1 if put_in_855_by_default else 0,
                 rsx_856_path,
+                1 if put_in_856_by_default else 0,
                 rsx_810_path,
+                1 if put_in_810_by_default else 0,
             ),
         )
         conn.commit()
@@ -380,8 +503,11 @@ class Database:
         if row:
             item = dict(row)
             # Convert boolean fields
-            item["is_on_detail_level"] = bool(item["is_on_detail_level"])
-            item["is_partnumber"] = bool(item["is_partnumber"])
+            item["is_on_detail_level"] = bool(item.get("is_on_detail_level", 0))
+            item["is_partnumber"] = bool(item.get("is_partnumber", 0))
+            item["put_in_855_by_default"] = bool(item.get("put_in_855_by_default", 0))
+            item["put_in_856_by_default"] = bool(item.get("put_in_856_by_default", 0))
+            item["put_in_810_by_default"] = bool(item.get("put_in_810_by_default", 0))
             return item
         return None
 
@@ -398,25 +524,47 @@ class Database:
         is_on_detail_level: bool,
         is_partnumber: bool,
         rsx_855_path: str,
+        put_in_855_by_default: bool,
         rsx_856_path: str,
+        put_in_856_by_default: bool,
         rsx_810_path: str,
+        put_in_810_by_default: bool,
     ) -> bool:
         """Update item property"""
         conn = self.get_connection()
         cursor = conn.cursor()
+        
+        # Check for uniqueness: edi_segment, edi_element_number, edi_qualifier combination
+        # Normalize edi_qualifier: treat None and empty string as the same
+        normalized_qualifier = (edi_qualifier or "").strip()
+        
+        # Check if another item with the same combination exists (excluding current item)
+        cursor.execute("""
+            SELECT item_properties_id FROM item_properties
+            WHERE edi_segment = ? AND edi_element_number = ?
+            AND COALESCE(edi_qualifier, '') = ?
+            AND item_properties_id != ?
+        """, (edi_segment, edi_element_number, normalized_qualifier, item_id))
+        
+        existing_item = cursor.fetchone()
+        if existing_item:
+            conn.close()
+            raise DuplicateItemError(edi_segment, edi_element_number, normalized_qualifier)
+        
         cursor.execute(
             """
             UPDATE item_properties
             SET edi_segment = ?, edi_element_number = ?, edi_qualifier = ?,
                 TLI_value = ?, "850_RSX_tag" = ?, "850_TLI_tag" = ?,
                 sourcing_group_properties_id = ?, is_on_detail_level = ?,
-                is_partnumber = ?, "855_RSX_path" = ?, "856_RSX_path" = ?, "810_RSX_path" = ?
+                is_partnumber = ?, "855_RSX_path" = ?, put_in_855_by_default = ?,
+                "856_RSX_path" = ?, put_in_856_by_default = ?, "810_RSX_path" = ?, put_in_810_by_default = ?
             WHERE item_properties_id = ?
             """,
             (
                 edi_segment,
                 edi_element_number,
-                edi_qualifier or "",
+                normalized_qualifier or "",
                 TLI_value,
                 rsx_850_tag,
                 tli_850_tag,
@@ -424,8 +572,11 @@ class Database:
                 1 if is_on_detail_level else 0,
                 1 if is_partnumber else 0,
                 rsx_855_path,
+                1 if put_in_855_by_default else 0,
                 rsx_856_path,
+                1 if put_in_856_by_default else 0,
                 rsx_810_path,
+                1 if put_in_810_by_default else 0,
                 item_id,
             ),
         )

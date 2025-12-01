@@ -1,10 +1,10 @@
 """Main window module for the application"""
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -23,6 +23,8 @@ from application.config import ConfigManager
 from application.database import Database
 from application.editor import ItemPropertiesEditor
 from application.file_handlers import InputFileFinder, OutputFileWriter, XTLParser
+from application.spreadsheet_parser import Item, SpreadsheetParser
+from application.tnc_parser import InboundDocScenario, TOMMMParser
 from application.translations import TRANSLATIONS
 
 
@@ -40,12 +42,26 @@ class MainWindow(QMainWindow):
         self.base_path = base_path
         self.setWindowTitle("TNC Map Helper")
         self.setMinimumWidth(600)
+        
+        # Set window icon
+        self._set_window_icon()
 
         # File paths
         self.spreadsheet_path: Optional[Path] = None
         self.tnc_platform_path: Optional[Path] = None
         self.csv_archive_path: Optional[Path] = None
         self.xtl_path: Optional[Path] = None
+        
+        # Parsed items list
+        self.parsed_items: List[Item] = []
+        self.spreadsheet_parse_success: Optional[bool] = None
+        self.spreadsheet_parse_error: Optional[str] = None
+        
+        # Parsed TOMMM scenarios
+        self.parsed_scenarios: List[InboundDocScenario] = []
+        self.tnc_parse_success: Optional[bool] = None
+        self.tnc_parse_error: Optional[str] = None
+        self.tnc_company_name: Optional[str] = None
 
         # Configuration manager (config is now in application folder)
         config_dir = Path(__file__).parent / ".config"
@@ -73,6 +89,12 @@ class MainWindow(QMainWindow):
 
         # Auto-fill from input folder
         self.auto_fill_from_input()
+
+        # Clear Java Package Name field on startup (after auto-fill to ensure it's always empty)
+        self.java_package_field.clear()
+        
+        # Update Java Package Name label style (should be red and bold since field is empty)
+        self._update_java_package_label_style()
 
         # Update process button state
         self.update_process_button_state()
@@ -108,12 +130,31 @@ class MainWindow(QMainWindow):
         spreadsheet_group = QGroupBox("Spreadsheet *")
         self.ui_elements["spreadsheet_group"] = spreadsheet_group
         spreadsheet_layout = QHBoxLayout()
+        
+        # Status button (clickable, shows parsing success/failure)
+        self.spreadsheet_status_button = QPushButton()
+        self.spreadsheet_status_button.setFixedWidth(35)
+        self.spreadsheet_status_button.setFixedHeight(28)
+        self.spreadsheet_status_button.clicked.connect(self._show_spreadsheet_parse_status)  # type: ignore[arg-type]
+        self.spreadsheet_status_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.spreadsheet_status_button.hide()
+        
+        # Refresh parsing button
+        self.spreadsheet_refresh_button = QPushButton("↻")
+        self.spreadsheet_refresh_button.setFixedWidth(40)
+        self.spreadsheet_refresh_button.setFixedHeight(32)
+        self.spreadsheet_refresh_button.clicked.connect(self._refresh_spreadsheet_parsing)  # type: ignore[arg-type]
+        self.spreadsheet_refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.spreadsheet_refresh_button.hide()
+        
         self.spreadsheet_label = QLabel("Not selected")
         # Enable HTML formatting for labels
         self.spreadsheet_label.setTextFormat(Qt.TextFormat.RichText)
         self.spreadsheet_button = QPushButton("Select file")
         self.ui_elements["spreadsheet_button"] = self.spreadsheet_button
         self.spreadsheet_button.clicked.connect(self.select_spreadsheet)  # type: ignore[arg-type]
+        spreadsheet_layout.addWidget(self.spreadsheet_status_button)
+        spreadsheet_layout.addWidget(self.spreadsheet_refresh_button)
         spreadsheet_layout.addWidget(self.spreadsheet_label)
         spreadsheet_layout.addWidget(self.spreadsheet_button)
         spreadsheet_group.setLayout(spreadsheet_layout)
@@ -123,11 +164,30 @@ class MainWindow(QMainWindow):
         tnc_group = QGroupBox("TnC Platform page")
         self.ui_elements["tnc_group"] = tnc_group
         tnc_layout = QHBoxLayout()
+        
+        # Status button for TOMMM parsing
+        self.tnc_status_button = QPushButton()
+        self.tnc_status_button.setFixedWidth(35)
+        self.tnc_status_button.setFixedHeight(28)
+        self.tnc_status_button.clicked.connect(self._show_tnc_parse_status)  # type: ignore[arg-type]
+        self.tnc_status_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.tnc_status_button.hide()
+        
+        # Refresh parsing button for TOMMM
+        self.tnc_refresh_button = QPushButton("↻")
+        self.tnc_refresh_button.setFixedWidth(40)
+        self.tnc_refresh_button.setFixedHeight(32)
+        self.tnc_refresh_button.clicked.connect(self._refresh_tnc_parsing)  # type: ignore[arg-type]
+        self.tnc_refresh_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.tnc_refresh_button.hide()
+        
         self.tnc_label = QLabel("Not selected")
         self.tnc_label.setTextFormat(Qt.TextFormat.RichText)
         self.tnc_button = QPushButton("Select file")
         self.ui_elements["tnc_button"] = self.tnc_button
         self.tnc_button.clicked.connect(self.select_tnc_platform)  # type: ignore[arg-type]
+        tnc_layout.addWidget(self.tnc_status_button)
+        tnc_layout.addWidget(self.tnc_refresh_button)
         tnc_layout.addWidget(self.tnc_label)
         tnc_layout.addWidget(self.tnc_button)
         tnc_group.setLayout(tnc_layout)
@@ -170,7 +230,9 @@ class MainWindow(QMainWindow):
         self.ui_elements["package_label"] = package_label
         package_label.setMinimumWidth(150)
         self.java_package_field = QLineEdit()
+        # Placeholder will be set in update_ui_texts() based on current language
         self.java_package_field.textChanged.connect(self.update_process_button_state)  # type: ignore[arg-type]
+        self.java_package_field.textChanged.connect(self._update_java_package_label_style)  # type: ignore[arg-type]
         package_layout.addWidget(package_label)
         package_layout.addWidget(self.java_package_field)
         combined_layout.addLayout(package_layout)
@@ -225,10 +287,17 @@ class MainWindow(QMainWindow):
         if file_path:
             self.spreadsheet_path = Path(file_path)
             self.spreadsheet_label.setText(self.spreadsheet_path.name)
+            # Parse spreadsheet automatically
+            self._parse_spreadsheet()
             self.update_process_button_state()
         else:
             self.spreadsheet_path = None
             self._set_not_selected_label(self.spreadsheet_label, is_required=True)
+            self.spreadsheet_status_button.hide()
+            self.spreadsheet_refresh_button.hide()
+            self.parsed_items = []
+            self.spreadsheet_parse_success = None
+            self.spreadsheet_parse_error = None
             self.update_process_button_state()
 
     def select_tnc_platform(self) -> None:
@@ -243,10 +312,18 @@ class MainWindow(QMainWindow):
         if file_path:
             self.tnc_platform_path = Path(file_path)
             self.tnc_label.setText(self.tnc_platform_path.name)
+            # Parse TOMMM file automatically
+            self._parse_tnc_file()
             self.update_process_button_state()
         else:
             self.tnc_platform_path = None
             self._set_not_selected_label(self.tnc_label, is_required=True)
+            self.tnc_status_button.hide()
+            self.tnc_refresh_button.hide()
+            self.parsed_scenarios = []
+            self.tnc_parse_success = None
+            self.tnc_parse_error = None
+            self.tnc_company_name = None
             self.update_process_button_state()
 
     def select_csv_archive(self) -> None:
@@ -281,8 +358,7 @@ class MainWindow(QMainWindow):
 
             if parsed_data["owner"]:
                 self.company_name_field.setText(parsed_data["owner"])
-            if parsed_data["javaPackageName"]:
-                self.java_package_field.setText(parsed_data["javaPackageName"])
+            # Java Package Name is not filled from .xtl file - it should always be empty on startup
             if parsed_data["lastModifiedBy"]:
                 # Only set author if field is empty or preserve_author is False
                 if not preserve_author or not self.author_field.text().strip():
@@ -302,6 +378,8 @@ class MainWindow(QMainWindow):
         if spreadsheet_path:
             self.spreadsheet_path = spreadsheet_path
             self.spreadsheet_label.setText(self.spreadsheet_path.name)
+            # Parse spreadsheet automatically
+            self._parse_spreadsheet()
 
         if tnc_platform_path:
             self.tnc_platform_path = tnc_platform_path
@@ -326,6 +404,8 @@ class MainWindow(QMainWindow):
             self._set_not_selected_label(self.tnc_label, is_required=True)
         else:
             self.tnc_label.setText(self.tnc_platform_path.name)
+            # Parse TOMMM file automatically
+            self._parse_tnc_file()
 
         if self.csv_archive_path is None:
             self._set_not_selected_label(self.csv_archive_label, is_required=True)
@@ -334,6 +414,24 @@ class MainWindow(QMainWindow):
 
         self.update_process_button_state()
 
+    def _update_java_package_label_style(self) -> None:
+        """Update Java Package Name label style based on field content"""
+        package_label = self.ui_elements["package_label"]
+        has_text = bool(self.java_package_field.text().strip())
+        
+        if has_text:
+            # Normal style when field has text
+            package_label.setStyleSheet("")
+            font = package_label.font()
+            font.setBold(False)
+            package_label.setFont(font)
+        else:
+            # Red and bold when field is empty
+            package_label.setStyleSheet("color: red;")
+            font = package_label.font()
+            font.setBold(True)
+            package_label.setFont(font)
+    
     def update_process_button_state(self) -> None:
         """Update Process Data button state"""
         has_spreadsheet = self.spreadsheet_path is not None
@@ -401,7 +499,7 @@ class MainWindow(QMainWindow):
             )
 
         # Write output file
-        error = OutputFileWriter.write_output_file(output_dir, company_name, java_package, author)
+        error = OutputFileWriter.write_output_file(output_dir, company_name, java_package, author, self.parsed_scenarios)
         if error:
             QMessageBox.critical(
                 self,
@@ -422,6 +520,14 @@ class MainWindow(QMainWindow):
             self.current_language = language
             self.update_ui_texts()
             self.config_manager.save_language(language)
+            
+            # Re-parse spreadsheet with new language to update error messages
+            if self.spreadsheet_path:
+                self._parse_spreadsheet()
+            
+            # Re-parse TOMMM with new language to update error messages
+            if self.tnc_platform_path:
+                self._parse_tnc_file()
 
     def load_language(self) -> None:
         """Load last selected language from configuration"""
@@ -465,6 +571,12 @@ class MainWindow(QMainWindow):
         self.ui_elements["company_label"].setText(t["company_name"])
         self.ui_elements["package_label"].setText(t["java_package"])
         self.ui_elements["author_label"].setText(t["author"])
+        
+        # Update Java Package Name placeholder
+        self.java_package_field.setPlaceholderText(t["java_package_placeholder"])
+        
+        # Update Java Package Name label style (preserve style based on field content)
+        self._update_java_package_label_style()
 
         # Update "Not selected" text for unselected fields
         # Required fields: red color
@@ -483,6 +595,272 @@ class MainWindow(QMainWindow):
         else:
             self.csv_archive_label.setText(self.csv_archive_path.name)
 
+    def _parse_spreadsheet(self) -> None:
+        """Parse selected spreadsheet file"""
+        if not self.spreadsheet_path:
+            return
+        
+        parser = SpreadsheetParser(self.database, self.current_language)
+        items, success, error_message = parser.parse(self.spreadsheet_path)
+        
+        self.parsed_items = items
+        self.spreadsheet_parse_success = success
+        self.spreadsheet_parse_error = error_message
+        
+        # Update status icon
+        self._update_spreadsheet_status_icon()
+    
+    def _update_spreadsheet_status_icon(self) -> None:
+        """Update spreadsheet parsing status button"""
+        t = TRANSLATIONS[self.current_language]
+        
+        if self.spreadsheet_parse_success is None:
+            self.spreadsheet_status_button.hide()
+            self.spreadsheet_refresh_button.hide()
+            return
+        
+        self.spreadsheet_status_button.show()
+        self.spreadsheet_refresh_button.show()
+        
+        # Set refresh button tooltip and style
+        self.spreadsheet_refresh_button.setToolTip(t["tooltip_refresh_parsing"])
+        self.spreadsheet_refresh_button.setStyleSheet(
+            "QPushButton {"
+            "  background-color: #e3f2fd; "
+            "  color: #1976d2; "
+            "  font-weight: bold; "
+            "  font-size: 20px; "
+            "  border: none; "
+            "  border-radius: 3px; "
+            "  padding: 2px;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: #bbdefb; "
+            "}"
+            "QPushButton:pressed {"
+            "  background-color: #90caf9; "
+            "}"
+        )
+        
+        if self.spreadsheet_parse_success:
+            # Subtle green button with checkmark (success)
+            self.spreadsheet_status_button.setText("✓")
+            self.spreadsheet_status_button.setToolTip(t["tooltip_parse_success"])
+            self.spreadsheet_status_button.setStyleSheet(
+                "QPushButton {"
+                "  background-color: #e8f5e9; "
+                "  color: #2e7d32; "
+                "  font-weight: bold; "
+                "  font-size: 16px; "
+                "  border: none; "
+                "  border-radius: 3px; "
+                "  padding: 2px;"
+                "}"
+                "QPushButton:hover {"
+                "  background-color: #c8e6c9; "
+                "}"
+                "QPushButton:pressed {"
+                "  background-color: #a5d6a7; "
+                "}"
+            )
+        else:
+            # Subtle red button with X (error)
+            self.spreadsheet_status_button.setText("✗")
+            self.spreadsheet_status_button.setToolTip(t["tooltip_parse_error"])
+            self.spreadsheet_status_button.setStyleSheet(
+                "QPushButton {"
+                "  background-color: #ffebee; "
+                "  color: #c62828; "
+                "  font-weight: bold; "
+                "  font-size: 16px; "
+                "  border: none; "
+                "  border-radius: 3px; "
+                "  padding: 2px;"
+                "}"
+                "QPushButton:hover {"
+                "  background-color: #ffcdd2; "
+                "}"
+                "QPushButton:pressed {"
+                "  background-color: #ef9a9a; "
+                "}"
+            )
+    
+    def _show_spreadsheet_parse_status(self) -> None:
+        """Show spreadsheet parsing status message"""
+        t = TRANSLATIONS[self.current_language]
+        
+        if self.spreadsheet_parse_success is None:
+            return
+        
+        if self.spreadsheet_parse_success:
+            QMessageBox.information(
+                self,
+                t.get("parsing_status", "Статус парсингу"),
+                t.get("spreadsheet_parse_success", "Парсинг Spreadsheet завершено успішно")
+            )
+        else:
+            error_msg = self.spreadsheet_parse_error or t.get("spreadsheet_parse_error", "Помилка парсингу")
+            QMessageBox.warning(
+                self,
+                t.get("parsing_status", "Статус парсингу"),
+                error_msg
+            )
+    
+    def _refresh_spreadsheet_parsing(self) -> None:
+        """Refresh spreadsheet parsing data"""
+        if self.spreadsheet_path:
+            self._parse_spreadsheet()
+    
+    def _parse_tnc_file(self) -> None:
+        """Parse selected TOMMM file"""
+        if not self.tnc_platform_path:
+            return
+        
+        parser = TOMMMParser(self.current_language)
+        scenarios, company_name, error_message = parser.parse(self.tnc_platform_path)
+        
+        self.parsed_scenarios = scenarios
+        self.tnc_company_name = company_name
+        self.tnc_parse_success = (error_message is None and len(scenarios) > 0)
+        self.tnc_parse_error = error_message
+        
+        # Update status icon
+        self._update_tnc_status_icon()
+        
+        # Always update company name if parsed (both on auto-parse and refresh)
+        if company_name:
+            self.company_name_field.setText(company_name)
+    
+    def _update_tnc_status_icon(self) -> None:
+        """Update TOMMM parsing status button"""
+        t = TRANSLATIONS[self.current_language]
+        
+        if self.tnc_parse_success is None:
+            self.tnc_status_button.hide()
+            self.tnc_refresh_button.hide()
+            return
+        
+        self.tnc_status_button.show()
+        self.tnc_refresh_button.show()
+        
+        # Set refresh button tooltip and style
+        self.tnc_refresh_button.setToolTip(t["tooltip_refresh_parsing"])
+        self.tnc_refresh_button.setStyleSheet(
+            "QPushButton {"
+            "  background-color: #e3f2fd; "
+            "  color: #1976d2; "
+            "  font-weight: bold; "
+            "  font-size: 20px; "
+            "  border: none; "
+            "  border-radius: 3px; "
+            "  padding: 2px;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: #bbdefb; "
+            "}"
+            "QPushButton:pressed {"
+            "  background-color: #90caf9; "
+            "}"
+        )
+        
+        if self.tnc_parse_success:
+            # Subtle green button with checkmark (success)
+            self.tnc_status_button.setText("✓")
+            self.tnc_status_button.setToolTip(t["tooltip_parse_success"])
+            self.tnc_status_button.setStyleSheet(
+                "QPushButton {"
+                "  background-color: #e8f5e9; "
+                "  color: #2e7d32; "
+                "  font-weight: bold; "
+                "  font-size: 16px; "
+                "  border: none; "
+                "  border-radius: 3px; "
+                "  padding: 2px;"
+                "}"
+                "QPushButton:hover {"
+                "  background-color: #c8e6c9; "
+                "}"
+                "QPushButton:pressed {"
+                "  background-color: #a5d6a7; "
+                "}"
+            )
+        else:
+            # Subtle red button with X (error)
+            self.tnc_status_button.setText("✗")
+            self.tnc_status_button.setToolTip(t["tooltip_parse_error"])
+            self.tnc_status_button.setStyleSheet(
+                "QPushButton {"
+                "  background-color: #ffebee; "
+                "  color: #c62828; "
+                "  font-weight: bold; "
+                "  font-size: 16px; "
+                "  border: none; "
+                "  border-radius: 3px; "
+                "  padding: 2px;"
+                "}"
+                "QPushButton:hover {"
+                "  background-color: #ffcdd2; "
+                "}"
+                "QPushButton:pressed {"
+                "  background-color: #ef9a9a; "
+                "}"
+            )
+    
+    def _show_tnc_parse_status(self) -> None:
+        """Show TOMMM parsing status message"""
+        t = TRANSLATIONS[self.current_language]
+        
+        if self.tnc_parse_success is None:
+            return
+        
+        if self.tnc_parse_success:
+            QMessageBox.information(
+                self,
+                t.get("parsing_status", "Статус парсингу"),
+                t.get("tnc_parse_success", "Парсинг ключів та назв сценаріїв завершено успішно")
+            )
+        else:
+            error_msg = self.tnc_parse_error or t.get("tnc_parse_error", "Помилка парсингу")
+            QMessageBox.warning(
+                self,
+                t.get("parsing_status", "Статус парсингу"),
+                error_msg
+            )
+    
+    def _refresh_tnc_parsing(self) -> None:
+        """Refresh TOMMM parsing data"""
+        if self.tnc_platform_path:
+            self._parse_tnc_file()
+    
+    def _set_window_icon(self) -> None:
+        """Set window icon from file or use default"""
+        # Try to load icon from application folder
+        icon_path = Path(__file__).parent / "icon.ico"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+        else:
+            # Try PNG as fallback
+            icon_path = Path(__file__).parent / "icon.png"
+            if icon_path.exists():
+                self.setWindowIcon(QIcon(str(icon_path)))
+            else:
+                # Create a simple default icon if no file exists
+                pixmap = QPixmap(32, 32)
+                pixmap.fill(Qt.GlobalColor.transparent)
+                # Draw a simple "T" letter as default icon
+                from PyQt6.QtGui import QPainter, QColor
+                painter = QPainter(pixmap)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.fillRect(0, 0, 32, 32, QColor(33, 150, 243))  # Blue background
+                painter.setPen(QColor(255, 255, 255))  # White text
+                font = QFont()
+                font.setPointSize(20)
+                font.setBold(True)
+                painter.setFont(font)
+                painter.drawText(0, 0, 32, 32, Qt.AlignmentFlag.AlignCenter, "T")
+                painter.end()
+                self.setWindowIcon(QIcon(pixmap))
+    
     def open_items_editor(self) -> None:
         """Open Items Properties Editor"""
         editor = ItemPropertiesEditor(self.database, self.current_language, self)

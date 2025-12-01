@@ -3,7 +3,7 @@
 import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 
 class XTLParser:
@@ -109,7 +109,7 @@ class OutputFileWriter:
 
     @staticmethod
     def write_output_file(
-        output_dir: Path, company_name: str, java_package: str, author: str
+        output_dir: Path, company_name: str, java_package: str, author: str, scenarios: Optional[List] = None
     ) -> Optional[str]:
         """
         Write output file with processed data
@@ -119,6 +119,7 @@ class OutputFileWriter:
             company_name: Company name
             java_package: Java package name
             author: Author name
+            scenarios: List of InboundDocScenario objects
 
         Returns:
             Error message if any, None otherwise
@@ -128,7 +129,31 @@ class OutputFileWriter:
         output_file = output_dir / "output.txt"
         content = f"Company Name: {company_name}\n"
         content += f"Java Package Name: {java_package}\n"
-        content += f"Author: {author}\n"
+        content += f"Author: {author}\n\n"
+
+        # Add scenarios if provided
+        if scenarios:
+            content += "Scenarios:\n"
+            content += "=" * 80 + "\n"
+            for i, scenario in enumerate(scenarios, 1):
+                content += f"\nScenario {i}:\n"
+                content += f"  name: {scenario.name}\n"
+                content += f"  key: {scenario.key}\n"
+                content += f"  document_number: {scenario.document_number}\n"
+                content += f"  tset_code: {scenario.tset_code}\n"
+                content += f"  number_of_tli: {scenario.number_of_tli}\n"
+                content += f"  number_of_lines: {scenario.number_of_lines}\n"
+                content += f"  includes_855_docs: {scenario.includes_855_docs}\n"
+                content += f"  includes_856_docs: {scenario.includes_856_docs}\n"
+                content += f"  includes_810_docs: {scenario.includes_810_docs}\n"
+                content += f"  is_changed_by_850_scenario: {scenario.is_changed_by_850_scenario}\n"
+                content += f"  is_changer_850: {scenario.is_changer_850}\n"
+                content += f"  is_consolidated: {scenario.is_consolidated}\n"
+                content += f"  csv_design: {scenario.csv_design}\n"
+                content += f"  csv_test_file: {scenario.csv_test_file}\n"
+                if scenario.parsing_errors:
+                    content += f"  parsing_errors: {', '.join(scenario.parsing_errors)}\n"
+                content += "\n"
 
         try:
             output_file.write_text(content, encoding="utf-8")

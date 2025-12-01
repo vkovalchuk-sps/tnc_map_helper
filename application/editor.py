@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from application.database import Database
+from application.database import Database, DuplicateItemError
 from application.translations import TRANSLATIONS
 
 
@@ -90,7 +90,7 @@ class ItemPropertiesEditor(QDialog):
 
         # Table for items
         self.items_table = QTableWidget()
-        self.items_table.setColumnCount(13)
+        self.items_table.setColumnCount(16)
         self.items_table.setHorizontalHeaderLabels([
             "ID",
             self._t("edi_segment"),
@@ -103,8 +103,11 @@ class ItemPropertiesEditor(QDialog):
             self._t("is_on_detail_level"),
             self._t("is_partnumber"),
             self._t("855_RSX_path"),
+            self._t("put_in_855_by_default"),
             self._t("856_RSX_path"),
+            self._t("put_in_856_by_default"),
             self._t("810_RSX_path"),
+            self._t("put_in_810_by_default"),
         ])
         self.items_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.items_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -122,6 +125,7 @@ class ItemPropertiesEditor(QDialog):
                 font-weight: bold;
             }
         """)
+        self.items_table.setSortingEnabled(True)
         items_layout.addWidget(self.items_table)
 
         tabs.addTab(items_tab, self._t("items_tab"))
@@ -174,6 +178,7 @@ class ItemPropertiesEditor(QDialog):
                 font-weight: bold;
             }
         """)
+        self.sourcing_table.setSortingEnabled(True)
         sourcing_layout.addWidget(self.sourcing_table)
 
         tabs.addTab(sourcing_tab, self._t("sourcing_groups_tab"))
@@ -224,6 +229,7 @@ class ItemPropertiesEditor(QDialog):
                 font-weight: bold;
             }
         """)
+        self.order_path_table.setSortingEnabled(True)
         order_path_layout.addWidget(self.order_path_table)
 
         tabs.addTab(order_path_tab, self._t("order_paths_tab"))
@@ -317,12 +323,21 @@ class ItemPropertiesEditor(QDialog):
             item10 = QTableWidgetItem(item["855_RSX_path"])
             item10.setToolTip(self._t("desc_855_RSX_path"))
             self.items_table.setItem(row, 10, item10)
-            item11 = QTableWidgetItem(item["856_RSX_path"])
-            item11.setToolTip(self._t("desc_856_RSX_path"))
+            item11 = QTableWidgetItem("Yes" if item["put_in_855_by_default"] else "No")
+            item11.setToolTip(self._t("desc_put_in_855_by_default"))
             self.items_table.setItem(row, 11, item11)
-            item12 = QTableWidgetItem(item["810_RSX_path"])
-            item12.setToolTip(self._t("desc_810_RSX_path"))
+            item12 = QTableWidgetItem(item["856_RSX_path"])
+            item12.setToolTip(self._t("desc_856_RSX_path"))
             self.items_table.setItem(row, 12, item12)
+            item13 = QTableWidgetItem("Yes" if item["put_in_856_by_default"] else "No")
+            item13.setToolTip(self._t("desc_put_in_856_by_default"))
+            self.items_table.setItem(row, 13, item13)
+            item14 = QTableWidgetItem(item["810_RSX_path"])
+            item14.setToolTip(self._t("desc_810_RSX_path"))
+            self.items_table.setItem(row, 14, item14)
+            item15 = QTableWidgetItem("Yes" if item["put_in_810_by_default"] else "No")
+            item15.setToolTip(self._t("desc_put_in_810_by_default"))
+            self.items_table.setItem(row, 15, item15)
         self.items_table.resizeColumnsToContents()
 
     def get_selected_sourcing_group_id(self) -> Optional[int]:
@@ -654,7 +669,7 @@ class SourcingGroupDialog(QDialog):
             QMessageBox.warning(self, self._t("error"), self._t("select_order_path"))
             return
 
-        if self.group_data:
+        if self.group_data and "sourcing_group_properties_id" in self.group_data:
             self.database.update_sourcing_group(
                 self.group_data["sourcing_group_properties_id"],
                 populate_method,
@@ -763,12 +778,21 @@ class ItemDialog(QDialog):
         self.rsx_855_path_field = QLineEdit()
         self.rsx_855_path_field.setToolTip(self._t("desc_855_RSX_path"))
         self.rsx_855_path_field.setMinimumWidth(400)
+        self.put_in_855_by_default_check = QCheckBox()
+        self.put_in_855_by_default_check.setToolTip(self._t("desc_put_in_855_by_default"))
+        self.put_in_855_by_default_check.setStyleSheet("QCheckBox::indicator { width: 20px; height: 20px; }")
         self.rsx_856_path_field = QLineEdit()
         self.rsx_856_path_field.setToolTip(self._t("desc_856_RSX_path"))
         self.rsx_856_path_field.setMinimumWidth(400)
+        self.put_in_856_by_default_check = QCheckBox()
+        self.put_in_856_by_default_check.setToolTip(self._t("desc_put_in_856_by_default"))
+        self.put_in_856_by_default_check.setStyleSheet("QCheckBox::indicator { width: 20px; height: 20px; }")
         self.rsx_810_path_field = QLineEdit()
         self.rsx_810_path_field.setToolTip(self._t("desc_810_RSX_path"))
         self.rsx_810_path_field.setMinimumWidth(400)
+        self.put_in_810_by_default_check = QCheckBox()
+        self.put_in_810_by_default_check.setToolTip(self._t("desc_put_in_810_by_default"))
+        self.put_in_810_by_default_check.setStyleSheet("QCheckBox::indicator { width: 20px; height: 20px; }")
 
         # Add rows to grid: Column 0 = Label, Column 1 = Help Button, Column 2 = Input Field
         row = 0
@@ -821,15 +845,27 @@ class ItemDialog(QDialog):
         grid.addWidget(self._create_help_button("desc_855_RSX_path"), row, 1)
         grid.addWidget(self.rsx_855_path_field, row, 2)
         row += 1
+        grid.addWidget(QLabel(self._t("put_in_855_by_default") + ":"), row, 0)
+        grid.addWidget(self._create_help_button("desc_put_in_855_by_default"), row, 1)
+        grid.addWidget(self.put_in_855_by_default_check, row, 2)
+        row += 1
         
         grid.addWidget(QLabel(self._t("856_RSX_path") + ":"), row, 0)
         grid.addWidget(self._create_help_button("desc_856_RSX_path"), row, 1)
         grid.addWidget(self.rsx_856_path_field, row, 2)
         row += 1
+        grid.addWidget(QLabel(self._t("put_in_856_by_default") + ":"), row, 0)
+        grid.addWidget(self._create_help_button("desc_put_in_856_by_default"), row, 1)
+        grid.addWidget(self.put_in_856_by_default_check, row, 2)
+        row += 1
         
         grid.addWidget(QLabel(self._t("810_RSX_path") + ":"), row, 0)
         grid.addWidget(self._create_help_button("desc_810_RSX_path"), row, 1)
         grid.addWidget(self.rsx_810_path_field, row, 2)
+        row += 1
+        grid.addWidget(QLabel(self._t("put_in_810_by_default") + ":"), row, 0)
+        grid.addWidget(self._create_help_button("desc_put_in_810_by_default"), row, 1)
+        grid.addWidget(self.put_in_810_by_default_check, row, 2)
 
         scroll_layout.addLayout(grid)
         scroll_layout.addStretch()
@@ -859,8 +895,11 @@ class ItemDialog(QDialog):
             self.is_on_detail_level_check.setChecked(self.item_data["is_on_detail_level"])
             self.is_partnumber_check.setChecked(self.item_data["is_partnumber"])
             self.rsx_855_path_field.setText(self.item_data["855_RSX_path"])
+            self.put_in_855_by_default_check.setChecked(self.item_data.get("put_in_855_by_default", False))
             self.rsx_856_path_field.setText(self.item_data["856_RSX_path"])
+            self.put_in_856_by_default_check.setChecked(self.item_data.get("put_in_856_by_default", False))
             self.rsx_810_path_field.setText(self.item_data["810_RSX_path"])
+            self.put_in_810_by_default_check.setChecked(self.item_data.get("put_in_810_by_default", False))
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -887,17 +926,17 @@ class ItemDialog(QDialog):
         is_on_detail_level = self.is_on_detail_level_check.isChecked()
         is_partnumber = self.is_partnumber_check.isChecked()
         rsx_855_path = self.rsx_855_path_field.text().strip()
+        put_in_855_by_default = self.put_in_855_by_default_check.isChecked()
         rsx_856_path = self.rsx_856_path_field.text().strip()
+        put_in_856_by_default = self.put_in_856_by_default_check.isChecked()
         rsx_810_path = self.rsx_810_path_field.text().strip()
+        put_in_810_by_default = self.put_in_810_by_default_check.isChecked()
 
         if not all([
             edi_segment,
             TLI_value,
             rsx_850_tag,
             tli_850_tag,
-            rsx_855_path,
-            rsx_856_path,
-            rsx_810_path,
         ]):
             QMessageBox.warning(self, self._t("error"), self._t("fill_all_fields"))
             return
@@ -906,37 +945,54 @@ class ItemDialog(QDialog):
             QMessageBox.warning(self, self._t("error"), self._t("select_sourcing_group"))
             return
 
-        if self.item_data:
-            self.database.update_item(
-                self.item_data["item_properties_id"],
-                edi_segment,
-                edi_element_number,
-                edi_qualifier,
-                TLI_value,
-                rsx_850_tag,
-                tli_850_tag,
-                sourcing_group_id,
-                is_on_detail_level,
-                is_partnumber,
-                rsx_855_path,
-                rsx_856_path,
-                rsx_810_path,
+        try:
+            if self.item_data and "item_properties_id" in self.item_data:
+                self.database.update_item(
+                    self.item_data["item_properties_id"],
+                    edi_segment,
+                    edi_element_number,
+                    edi_qualifier,
+                    TLI_value,
+                    rsx_850_tag,
+                    tli_850_tag,
+                    sourcing_group_id,
+                    is_on_detail_level,
+                    is_partnumber,
+                    rsx_855_path,
+                    put_in_855_by_default,
+                    rsx_856_path,
+                    put_in_856_by_default,
+                    rsx_810_path,
+                    put_in_810_by_default,
+                )
+            else:
+                self.database.create_item(
+                    edi_segment,
+                    edi_element_number,
+                    edi_qualifier,
+                    TLI_value,
+                    rsx_850_tag,
+                    tli_850_tag,
+                    sourcing_group_id,
+                    is_on_detail_level,
+                    is_partnumber,
+                    rsx_855_path,
+                    put_in_855_by_default,
+                    rsx_856_path,
+                    put_in_856_by_default,
+                    rsx_810_path,
+                    put_in_810_by_default,
+                )
+        except DuplicateItemError as e:
+            # Handle uniqueness constraint violation with localized message
+            qualifier_display = e.edi_qualifier if e.edi_qualifier else self._t("error_empty_qualifier")
+            error_message = self._t("error_duplicate_item").format(
+                segment=e.edi_segment,
+                number=e.edi_element_number,
+                qualifier=qualifier_display
             )
-        else:
-            self.database.create_item(
-                edi_segment,
-                edi_element_number,
-                edi_qualifier,
-                TLI_value,
-                rsx_850_tag,
-                tli_850_tag,
-                sourcing_group_id,
-                is_on_detail_level,
-                is_partnumber,
-                rsx_855_path,
-                rsx_856_path,
-                rsx_810_path,
-            )
+            QMessageBox.warning(self, self._t("error"), error_message)
+            return
 
         self.accept()
 
@@ -1034,7 +1090,7 @@ class OrderPathDialog(QDialog):
             QMessageBox.warning(self, self._t("error"), self._t("fill_all_fields"))
             return
 
-        if self.path_data:
+        if self.path_data and "order_path_properties_id" in self.path_data:
             self.database.update_order_path(
                 self.path_data["order_path_properties_id"],
                 order_path,
