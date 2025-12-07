@@ -139,6 +139,8 @@ class OutputFileWriter:
                 content += f"\nScenario {i}:\n"
                 content += f"  name: {scenario.name}\n"
                 content += f"  key: {scenario.key}\n"
+                if scenario.key_with_date:
+                    content += f"  key_with_date: {scenario.key_with_date}\n"
                 content += f"  document_number: {scenario.document_number}\n"
                 content += f"  tset_code: {scenario.tset_code}\n"
                 content += f"  number_of_tli: {scenario.number_of_tli}\n"

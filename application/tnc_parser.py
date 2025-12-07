@@ -17,6 +17,7 @@ class InboundDocScenario:
     
     name: str = ""
     key: str = ""
+    key_with_date: str = ""
     document_number: int = 0
     tset_code: str = ""
     number_of_tli: int = 0
@@ -27,6 +28,7 @@ class InboundDocScenario:
     is_changed_by_850_scenario: bool = False
     is_changer_850: bool = False
     is_consolidated: bool = False
+    csv_design_filename: str = ""
     csv_design: str = ""
     csv_test_file: str = ""
     
@@ -46,6 +48,40 @@ class TOMMMParser:
         """
         self.language = language
         self.t = TRANSLATIONS.get(language, TRANSLATIONS["UA"])
+    
+    def _normalize_key(self, key: str) -> Tuple[str, str]:
+        """
+        Remove date prefixes from key if present
+        
+        Removes literal prefixes:
+        - POYYMMDD (literal string "POYYMMDD")
+        - YYMMDD (literal string "YYMMDD")
+        - YY (literal string "YY")
+        
+        Args:
+            key: Original key string
+            
+        Returns:
+            Tuple of (normalized_key, key_with_date):
+            - normalized_key: Key without date prefix
+            - key_with_date: Original key if it had a date prefix, empty string otherwise
+        """
+        if not key:
+            return key, ""
+        
+        # Pattern 1: POYYMMDD (literal string "POYYMMDD")
+        if key.startswith("POYYMMDD"):
+            return key[8:], key  # Return normalized key and original with prefix
+        
+        # Pattern 2: YYMMDD (literal string "YYMMDD")
+        if key.startswith("YYMMDD"):
+            return key[6:], key  # Return normalized key and original with prefix
+        
+        # Pattern 3: YY (literal string "YY")
+        if key.startswith("YY"):
+            return key[2:], key  # Return normalized key and original with prefix
+        
+        return key, ""  # No prefix found, return original key and empty string
     
     def parse(self, file_path: Path) -> Tuple[List[InboundDocScenario], Optional[str], Optional[str]]:
         """
@@ -114,7 +150,9 @@ class TOMMMParser:
             row_to_scenario = {}  # Map row index to scenario for 850 documents
             for idx, row_info in enumerate(row_data):
                 name = row_info["name"]
-                key = row_info["key"]
+                original_key = row_info["key"]
+                # Normalize key by removing date prefixes
+                key, key_with_date = self._normalize_key(original_key)
                 documents = row_info["documents"]
                 
                 # Check for 850 document
@@ -122,22 +160,24 @@ class TOMMMParser:
                     scenario = InboundDocScenario()
                     scenario.name = name
                     scenario.key = key
+                    scenario.key_with_date = key_with_date
                     scenario.document_number = 850
                     
                     # Filter document numbers (only numeric ones like "850", "855", etc.)
                     doc_numbers = [d for d in documents if d.isdigit()]
                     
                     # Check for related documents (855, 856, 810) in current row or other rows with same key
+                    # Use normalized keys for comparison
                     scenario.includes_855_docs = "855" in doc_numbers or any(
-                        r["key"] == key and "855" in [d for d in r["documents"] if d.isdigit()]
+                        self._normalize_key(r["key"])[0] == key and "855" in [d for d in r["documents"] if d.isdigit()]
                         for r in row_data
                     )
                     scenario.includes_856_docs = "856" in doc_numbers or any(
-                        r["key"] == key and "856" in [d for d in r["documents"] if d.isdigit()]
+                        self._normalize_key(r["key"])[0] == key and "856" in [d for d in r["documents"] if d.isdigit()]
                         for r in row_data
                     )
                     scenario.includes_810_docs = "810" in doc_numbers or any(
-                        r["key"] == key and "810" in [d for d in r["documents"] if d.isdigit()]
+                        self._normalize_key(r["key"])[0] == key and "810" in [d for d in r["documents"] if d.isdigit()]
                         for r in row_data
                     )
                     
@@ -149,6 +189,7 @@ class TOMMMParser:
                     scenario = InboundDocScenario()
                     scenario.name = name
                     scenario.key = key
+                    scenario.key_with_date = key_with_date
                     scenario.document_number = 860
                     scenario.includes_855_docs = False
                     scenario.includes_856_docs = False
@@ -157,10 +198,11 @@ class TOMMMParser:
                     scenarios.append(scenario)
             
             # Check for is_changed_by_850_scenario (multiple rows with same key and 850)
+            # Use normalized keys for grouping
             keys_with_850_rows = {}
             for idx, row_info in enumerate(row_data):
                 if "850" in row_info["documents"]:
-                    key = row_info["key"]
+                    key, _ = self._normalize_key(row_info["key"])
                     if key not in keys_with_850_rows:
                         keys_with_850_rows[key] = []
                     keys_with_850_rows[key].append(idx)
@@ -199,7 +241,7 @@ class TOMMMParser:
             # Check for is_consolidated (856 with key format "key_1 and key_2")
             for row_info in row_data:
                 if "856" in row_info["documents"]:
-                    key = row_info["key"]
+                    key, _ = self._normalize_key(row_info["key"])
                     # Check if key contains " and " (format: "key_1 and key_2")
                     if " and " in key:
                         parts = key.split(" and ")

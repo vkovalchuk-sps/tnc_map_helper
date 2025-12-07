@@ -94,10 +94,13 @@ class Item:
     def normalize_segment(seg: str) -> str:
         """
         Нормалізація сегмента:
-        - перетворює P01 → PO1 (специфічна вимога)
+        - перетворює всі варіанти, що починаються з "P0" на "PO"
+          (щоб P01, P04 тощо ставали PO1, PO4)
         - можна додати інші правила, якщо буде потрібно
         """
-        return seg.replace("P01", "PO1")
+        if seg.startswith("P0"):
+            return "PO" + seg[2:]
+        return seg
     
     @staticmethod
     def parse_edi_info(text: str) -> Tuple[str, str, str]:
@@ -114,6 +117,14 @@ class Item:
         
         if not text:
             return "", "", ""
+
+        # Спеціальна обробка значень типу P0401, P0402, P0101 тощо
+        # P0401 -> seg = PO4, el = 01; P0101 -> PO1, 01; P0402 -> PO4, 02 і т.д.
+        m = re.match(r'^P0(\d)(\d{2})$', text)
+        if m:
+            seg_digit, el = m.groups()
+            seg = f"PO{seg_digit}"
+            return seg, el, ""
         
         # Формат: SEGNN (SEGMM = QUAL)
         m = re.match(r'^(\S+?)(\d+)\s*\(\s*(\S+?)(\d+)\s*=\s*([A-Za-z0-9]+)\s*\)$', text)
@@ -196,8 +207,13 @@ class Item:
         m = re.match(r'^([A-Za-z]+)(\d+)$', text)
         if m:
             seg_part, digits = m.groups()
-            # Якщо номер елемента має 3+ цифри, перша цифра належить сегменту
-            if len(digits) >= 3:
+            # Спеціальний універсальний випадок для значень типу P0401, P0101 тощо
+            # P0401 -> seg = PO4, el = 01; P0101 -> PO1, 01; P0402 -> PO4, 02 і т.д.
+            if seg_part == "P" and len(digits) >= 3 and digits[0] == "0":
+                seg = "PO" + digits[1]
+                el = digits[-2:].zfill(2)
+            # Загальна логіка для інших сегментів
+            elif len(digits) >= 3:
                 # Беремо першу цифру для сегменту, останні 2 для номера
                 # Наприклад, N404 -> seg = N4, el = 04
                 seg = seg_part + digits[0]
