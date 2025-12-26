@@ -90,12 +90,14 @@ class ItemPropertiesEditor(QDialog):
 
         # Table for items
         self.items_table = QTableWidget()
-        self.items_table.setColumnCount(16)
+        self.items_table.setColumnCount(18)
         self.items_table.setHorizontalHeaderLabels([
             "ID",
             self._t("edi_segment"),
             self._t("edi_element_number"),
             self._t("edi_qualifier"),
+            self._t("extra_record_defining_rsx_tag"),
+            self._t("extra_record_defining_qual"),
             self._t("TLI_value"),
             self._t("850_RSX_tag"),
             self._t("850_TLI_tag"),
@@ -207,10 +209,11 @@ class ItemPropertiesEditor(QDialog):
 
         # Table for order paths
         self.order_path_table = QTableWidget()
-        self.order_path_table.setColumnCount(3)
+        self.order_path_table.setColumnCount(4)
         self.order_path_table.setHorizontalHeaderLabels([
             "ID",
             self._t("order_path"),
+            self._t("order_change_path"),
             self._t("java_code_wrapper"),
         ])
         self.order_path_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -246,23 +249,23 @@ class ItemPropertiesEditor(QDialog):
         self.sourcing_table.setRowCount(len(groups))
         for row, group in enumerate(groups):
             item0 = QTableWidgetItem(str(group["sourcing_group_properties_id"]))
-            item0.setToolTip(self._t("desc_sourcing_group_properties_id"))
+            item0.setToolTip(self._t("db_desc_sourcing_group_properties_id"))
             self.sourcing_table.setItem(row, 0, item0)
             item1 = QTableWidgetItem(group["populate_method_name"])
-            item1.setToolTip(self._t("desc_populate_method_name"))
+            item1.setToolTip(self._t("db_desc_populate_method_name"))
             self.sourcing_table.setItem(row, 1, item1)
             item2 = QTableWidgetItem(group["map_name"])
-            item2.setToolTip(self._t("desc_map_name"))
+            item2.setToolTip(self._t("db_desc_map_name"))
             self.sourcing_table.setItem(row, 2, item2)
             call_method_path = group.get("order_path", group.get("call_method_path", ""))
             item3 = QTableWidgetItem(call_method_path)
-            item3.setToolTip(self._t("desc_call_method_path"))
+            item3.setToolTip(self._t("db_desc_call_method_path"))
             self.sourcing_table.setItem(row, 3, item3)
             call_method_java_code = group.get("call_method_java_code", "")
             # Truncate for display
             display_java_code = call_method_java_code[:50] + "..." if len(call_method_java_code) > 50 else call_method_java_code
             item4 = QTableWidgetItem(display_java_code)
-            item4.setToolTip(self._t("desc_call_method_java_code"))
+            item4.setToolTip(self._t("db_desc_call_method_java_code"))
             self.sourcing_table.setItem(row, 4, item4)
         self.sourcing_table.resizeColumnsToContents()
 
@@ -271,17 +274,24 @@ class ItemPropertiesEditor(QDialog):
         self.order_path_table.setRowCount(len(paths))
         for row, path in enumerate(paths):
             item0 = QTableWidgetItem(str(path["order_path_properties_id"]))
-            item0.setToolTip(self._t("desc_order_path_properties_id"))
+            item0.setToolTip(self._t("db_desc_order_path_properties_id"))
             self.order_path_table.setItem(row, 0, item0)
+
             item1 = QTableWidgetItem(path["order_path"])
-            item1.setToolTip(self._t("desc_order_path"))
+            item1.setToolTip(self._t("db_desc_order_path"))
             self.order_path_table.setItem(row, 1, item1)
+
+            order_change_path = path.get("order_change_path", "")
+            item2 = QTableWidgetItem(order_change_path)
+            item2.setToolTip(self._t("db_desc_order_change_path"))
+            self.order_path_table.setItem(row, 2, item2)
+
             java_wrapper = path.get("java_code_wrapper") or ""
             # Truncate for display
             display_wrapper = java_wrapper[:50] + "..." if len(java_wrapper) > 50 else java_wrapper
-            item2 = QTableWidgetItem(display_wrapper)
-            item2.setToolTip(self._t("desc_java_code_wrapper"))
-            self.order_path_table.setItem(row, 2, item2)
+            item3 = QTableWidgetItem(display_wrapper)
+            item3.setToolTip(self._t("db_desc_java_code_wrapper"))
+            self.order_path_table.setItem(row, 3, item3)
         self.order_path_table.resizeColumnsToContents()
 
         # Load items
@@ -289,55 +299,65 @@ class ItemPropertiesEditor(QDialog):
         self.items_table.setRowCount(len(items))
         for row, item in enumerate(items):
             item0 = QTableWidgetItem(str(item["item_properties_id"]))
-            item0.setToolTip(self._t("desc_item_properties_id"))
+            item0.setToolTip(self._t("db_desc_item_properties_id"))
             self.items_table.setItem(row, 0, item0)
             item1 = QTableWidgetItem(item["edi_segment"])
-            item1.setToolTip(self._t("desc_edi_segment"))
+            item1.setToolTip(self._t("db_desc_edi_segment"))
             self.items_table.setItem(row, 1, item1)
             # Format edi_element_number as 01, 02, 03, etc.
             edi_element_str = f"{item['edi_element_number']:02d}"
             item2 = QTableWidgetItem(edi_element_str)
-            item2.setToolTip(self._t("desc_edi_element_number"))
+            item2.setToolTip(self._t("db_desc_edi_element_number"))
             self.items_table.setItem(row, 2, item2)
             item3 = QTableWidgetItem(item["edi_qualifier"] or "")
-            item3.setToolTip(self._t("desc_edi_qualifier"))
+            item3.setToolTip(self._t("db_desc_edi_qualifier"))
             self.items_table.setItem(row, 3, item3)
-            item4 = QTableWidgetItem(item["TLI_value"])
-            item4.setToolTip(self._t("desc_TLI_value"))
+            extra_tag = item.get("extra_record_defining_rsx_tag") or ""
+            item4 = QTableWidgetItem(extra_tag)
+            item4.setToolTip(self._t("db_desc_extra_record_defining_rsx_tag"))
             self.items_table.setItem(row, 4, item4)
-            item5 = QTableWidgetItem(item["850_RSX_tag"])
-            item5.setToolTip(self._t("desc_850_RSX_tag"))
+
+            extra_qual = item.get("extra_record_defining_qual") or ""
+            item5 = QTableWidgetItem(extra_qual)
+            item5.setToolTip(self._t("db_desc_extra_record_defining_qual"))
             self.items_table.setItem(row, 5, item5)
-            item6 = QTableWidgetItem(item["850_TLI_tag"])
-            item6.setToolTip(self._t("desc_850_TLI_tag"))
+
+            item6 = QTableWidgetItem(item["TLI_value"])
+            item6.setToolTip(self._t("db_desc_TLI_value"))
             self.items_table.setItem(row, 6, item6)
-            item7 = QTableWidgetItem(str(item["sourcing_group_properties_id"]))
-            item7.setToolTip(self._t("desc_sourcing_group_id"))
+            item7 = QTableWidgetItem(item["850_RSX_tag"])
+            item7.setToolTip(self._t("db_desc_850_RSX_tag"))
             self.items_table.setItem(row, 7, item7)
-            item8 = QTableWidgetItem("Yes" if item["is_on_detail_level"] else "No")
-            item8.setToolTip(self._t("desc_is_on_detail_level"))
+            item8 = QTableWidgetItem(item["850_TLI_tag"])
+            item8.setToolTip(self._t("db_desc_850_TLI_tag"))
             self.items_table.setItem(row, 8, item8)
-            item9 = QTableWidgetItem("Yes" if item["is_partnumber"] else "No")
-            item9.setToolTip(self._t("desc_is_partnumber"))
+            item9 = QTableWidgetItem(str(item["sourcing_group_properties_id"]))
+            item9.setToolTip(self._t("db_desc_sourcing_group_id"))
             self.items_table.setItem(row, 9, item9)
-            item10 = QTableWidgetItem(item["855_RSX_path"])
-            item10.setToolTip(self._t("desc_855_RSX_path"))
+            item10 = QTableWidgetItem("Yes" if item["is_on_detail_level"] else "No")
+            item10.setToolTip(self._t("db_desc_is_on_detail_level"))
             self.items_table.setItem(row, 10, item10)
-            item11 = QTableWidgetItem("Yes" if item["put_in_855_by_default"] else "No")
-            item11.setToolTip(self._t("desc_put_in_855_by_default"))
+            item11 = QTableWidgetItem("Yes" if item["is_partnumber"] else "No")
+            item11.setToolTip(self._t("db_desc_is_partnumber"))
             self.items_table.setItem(row, 11, item11)
-            item12 = QTableWidgetItem(item["856_RSX_path"])
-            item12.setToolTip(self._t("desc_856_RSX_path"))
+            item12 = QTableWidgetItem(item["855_RSX_path"])
+            item12.setToolTip(self._t("db_desc_855_RSX_path"))
             self.items_table.setItem(row, 12, item12)
-            item13 = QTableWidgetItem("Yes" if item["put_in_856_by_default"] else "No")
-            item13.setToolTip(self._t("desc_put_in_856_by_default"))
+            item13 = QTableWidgetItem("Yes" if item["put_in_855_by_default"] else "No")
+            item13.setToolTip(self._t("db_desc_put_in_855_by_default"))
             self.items_table.setItem(row, 13, item13)
-            item14 = QTableWidgetItem(item["810_RSX_path"])
-            item14.setToolTip(self._t("desc_810_RSX_path"))
+            item14 = QTableWidgetItem(item["856_RSX_path"])
+            item14.setToolTip(self._t("db_desc_856_RSX_path"))
             self.items_table.setItem(row, 14, item14)
-            item15 = QTableWidgetItem("Yes" if item["put_in_810_by_default"] else "No")
-            item15.setToolTip(self._t("desc_put_in_810_by_default"))
+            item15 = QTableWidgetItem("Yes" if item["put_in_856_by_default"] else "No")
+            item15.setToolTip(self._t("db_desc_put_in_856_by_default"))
             self.items_table.setItem(row, 15, item15)
+            item16 = QTableWidgetItem(item["810_RSX_path"])
+            item16.setToolTip(self._t("db_desc_810_RSX_path"))
+            self.items_table.setItem(row, 16, item16)
+            item17 = QTableWidgetItem("Yes" if item["put_in_810_by_default"] else "No")
+            item17.setToolTip(self._t("db_desc_put_in_810_by_default"))
+            self.items_table.setItem(row, 17, item17)
         self.items_table.resizeColumnsToContents()
 
     def get_selected_sourcing_group_id(self) -> Optional[int]:
@@ -589,16 +609,16 @@ class SourcingGroupDialog(QDialog):
         grid.setColumnStretch(2, 1)  # Make input field column stretchable
 
         self.populate_method_field = QLineEdit()
-        self.populate_method_field.setToolTip(self._t("desc_populate_method_name"))
+        self.populate_method_field.setToolTip(self._t("db_desc_populate_method_name"))
         self.populate_method_field.setMinimumWidth(400)
         self.map_name_field = QLineEdit()
-        self.map_name_field.setToolTip(self._t("desc_map_name"))
+        self.map_name_field.setToolTip(self._t("db_desc_map_name"))
         self.map_name_field.setMinimumWidth(400)
         
         # Order path combo (used for call_method_path selection)
         paths = self.database.get_all_order_paths()
         self.order_path_combo = QComboBox()
-        self.order_path_combo.setToolTip(self._t("desc_call_method_path"))
+        self.order_path_combo.setToolTip(self._t("db_desc_call_method_path"))
         self.order_path_combo.setMinimumWidth(400)
         for path in paths:
             self.order_path_combo.addItem(
@@ -607,29 +627,29 @@ class SourcingGroupDialog(QDialog):
             )
         
         self.call_method_java_code_field = QTextEdit()
-        self.call_method_java_code_field.setToolTip(self._t("desc_call_method_java_code"))
+        self.call_method_java_code_field.setToolTip(self._t("db_desc_call_method_java_code"))
         self.call_method_java_code_field.setMinimumWidth(400)
         self.call_method_java_code_field.setMinimumHeight(150)  # 7 rows approximately
         self.call_method_java_code_field.setMaximumHeight(150)
 
         # Row 0: populate_method_name
         grid.addWidget(QLabel(self._t("populate_method_name") + ":"), 0, 0)
-        grid.addWidget(self._create_help_button("desc_populate_method_name"), 0, 1)
+        grid.addWidget(self._create_help_button("db_desc_populate_method_name"), 0, 1)
         grid.addWidget(self.populate_method_field, 0, 2)
         
         # Row 1: map_name
         grid.addWidget(QLabel(self._t("map_name") + ":"), 1, 0)
-        grid.addWidget(self._create_help_button("desc_map_name"), 1, 1)
+        grid.addWidget(self._create_help_button("db_desc_map_name"), 1, 1)
         grid.addWidget(self.map_name_field, 1, 2)
         
         # Row 2: call_method_path (using order_path_combo for selection)
         grid.addWidget(QLabel(self._t("call_method_path") + ":"), 2, 0)
-        grid.addWidget(self._create_help_button("desc_call_method_path"), 2, 1)
+        grid.addWidget(self._create_help_button("db_desc_call_method_path"), 2, 1)
         grid.addWidget(self.order_path_combo, 2, 2)
         
         # Row 3: call_method_java_code
         grid.addWidget(QLabel(self._t("call_method_java_code") + ":"), 3, 0)
-        grid.addWidget(self._create_help_button("desc_call_method_java_code"), 3, 1)
+        grid.addWidget(self._create_help_button("db_desc_call_method_java_code"), 3, 1)
         grid.addWidget(self.call_method_java_code_field, 3, 2)
         
         layout.addLayout(grid)
@@ -738,29 +758,29 @@ class ItemDialog(QDialog):
         grid.setColumnStretch(2, 1)  # Make input field column stretchable
 
         self.edi_segment_field = QLineEdit()
-        self.edi_segment_field.setToolTip(self._t("desc_edi_segment"))
+        self.edi_segment_field.setToolTip(self._t("db_desc_edi_segment"))
         self.edi_segment_field.setMinimumWidth(400)
         self.edi_element_number_field = QLineEdit()
-        self.edi_element_number_field.setToolTip(self._t("desc_edi_element_number"))
+        self.edi_element_number_field.setToolTip(self._t("db_desc_edi_element_number"))
         self.edi_element_number_field.setMinimumWidth(400)
         self.edi_element_number_field.setPlaceholderText("01, 02, 03, ...")
         self.edi_qualifier_field = QLineEdit()
-        self.edi_qualifier_field.setToolTip(self._t("desc_edi_qualifier"))
+        self.edi_qualifier_field.setToolTip(self._t("db_desc_edi_qualifier"))
         self.edi_qualifier_field.setMinimumWidth(400)
         self.TLI_value_field = QLineEdit()
-        self.TLI_value_field.setToolTip(self._t("desc_TLI_value"))
+        self.TLI_value_field.setToolTip(self._t("db_desc_TLI_value"))
         self.TLI_value_field.setMinimumWidth(400)
         self.rsx_850_tag_field = QLineEdit()
-        self.rsx_850_tag_field.setToolTip(self._t("desc_850_RSX_tag"))
+        self.rsx_850_tag_field.setToolTip(self._t("db_desc_850_RSX_tag"))
         self.rsx_850_tag_field.setMinimumWidth(400)
         self.tli_850_tag_field = QLineEdit()
-        self.tli_850_tag_field.setToolTip(self._t("desc_850_TLI_tag"))
+        self.tli_850_tag_field.setToolTip(self._t("db_desc_850_TLI_tag"))
         self.tli_850_tag_field.setMinimumWidth(400)
 
         # Sourcing group combo
         groups = self.database.get_all_sourcing_groups()
         self.sourcing_group_combo = QComboBox()
-        self.sourcing_group_combo.setToolTip(self._t("desc_sourcing_group_id"))
+        self.sourcing_group_combo.setToolTip(self._t("db_desc_sourcing_group_id"))
         self.sourcing_group_combo.setMinimumWidth(400)
         for group in groups:
             self.sourcing_group_combo.addItem(
@@ -769,102 +789,120 @@ class ItemDialog(QDialog):
             )
 
         self.is_on_detail_level_check = QCheckBox()
-        self.is_on_detail_level_check.setToolTip(self._t("desc_is_on_detail_level"))
+        self.is_on_detail_level_check.setToolTip(self._t("db_desc_is_on_detail_level"))
         self.is_on_detail_level_check.setStyleSheet("QCheckBox::indicator { width: 20px; height: 20px; }")
         self.is_partnumber_check = QCheckBox()
-        self.is_partnumber_check.setToolTip(self._t("desc_is_partnumber"))
+        self.is_partnumber_check.setToolTip(self._t("db_desc_is_partnumber"))
         self.is_partnumber_check.setStyleSheet("QCheckBox::indicator { width: 20px; height: 20px; }")
 
         self.rsx_855_path_field = QLineEdit()
-        self.rsx_855_path_field.setToolTip(self._t("desc_855_RSX_path"))
+        self.rsx_855_path_field.setToolTip(self._t("db_desc_855_RSX_path"))
         self.rsx_855_path_field.setMinimumWidth(400)
         self.put_in_855_by_default_check = QCheckBox()
-        self.put_in_855_by_default_check.setToolTip(self._t("desc_put_in_855_by_default"))
+        self.put_in_855_by_default_check.setToolTip(self._t("db_desc_put_in_855_by_default"))
         self.put_in_855_by_default_check.setStyleSheet("QCheckBox::indicator { width: 20px; height: 20px; }")
         self.rsx_856_path_field = QLineEdit()
-        self.rsx_856_path_field.setToolTip(self._t("desc_856_RSX_path"))
+        self.rsx_856_path_field.setToolTip(self._t("db_desc_856_RSX_path"))
         self.rsx_856_path_field.setMinimumWidth(400)
         self.put_in_856_by_default_check = QCheckBox()
-        self.put_in_856_by_default_check.setToolTip(self._t("desc_put_in_856_by_default"))
+        self.put_in_856_by_default_check.setToolTip(self._t("db_desc_put_in_856_by_default"))
         self.put_in_856_by_default_check.setStyleSheet("QCheckBox::indicator { width: 20px; height: 20px; }")
         self.rsx_810_path_field = QLineEdit()
-        self.rsx_810_path_field.setToolTip(self._t("desc_810_RSX_path"))
+        self.rsx_810_path_field.setToolTip(self._t("db_desc_810_RSX_path"))
         self.rsx_810_path_field.setMinimumWidth(400)
         self.put_in_810_by_default_check = QCheckBox()
-        self.put_in_810_by_default_check.setToolTip(self._t("desc_put_in_810_by_default"))
+        self.put_in_810_by_default_check.setToolTip(self._t("db_desc_put_in_810_by_default"))
         self.put_in_810_by_default_check.setStyleSheet("QCheckBox::indicator { width: 20px; height: 20px; }")
+
+        self.extra_record_defining_rsx_tag_field = QLineEdit()
+        self.extra_record_defining_rsx_tag_field.setToolTip(self._t("db_desc_extra_record_defining_rsx_tag"))
+        self.extra_record_defining_rsx_tag_field.setMinimumWidth(400)
+
+        self.extra_record_defining_qual_field = QLineEdit()
+        self.extra_record_defining_qual_field.setToolTip(self._t("db_desc_extra_record_defining_qual"))
+        self.extra_record_defining_qual_field.setMinimumWidth(400)
 
         # Add rows to grid: Column 0 = Label, Column 1 = Help Button, Column 2 = Input Field
         row = 0
         grid.addWidget(QLabel(self._t("edi_segment") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_edi_segment"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_edi_segment"), row, 1)
         grid.addWidget(self.edi_segment_field, row, 2)
         row += 1
         
         grid.addWidget(QLabel(self._t("edi_element_number") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_edi_element_number"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_edi_element_number"), row, 1)
         grid.addWidget(self.edi_element_number_field, row, 2)
         row += 1
         
         grid.addWidget(QLabel(self._t("edi_qualifier") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_edi_qualifier"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_edi_qualifier"), row, 1)
         grid.addWidget(self.edi_qualifier_field, row, 2)
         row += 1
         
+        grid.addWidget(QLabel(self._t("extra_record_defining_rsx_tag") + ":"), row, 0)
+        grid.addWidget(self._create_help_button("db_desc_extra_record_defining_rsx_tag"), row, 1)
+        grid.addWidget(self.extra_record_defining_rsx_tag_field, row, 2)
+        row += 1
+
+        grid.addWidget(QLabel(self._t("extra_record_defining_qual") + ":"), row, 0)
+        grid.addWidget(self._create_help_button("db_desc_extra_record_defining_qual"), row, 1)
+        grid.addWidget(self.extra_record_defining_qual_field, row, 2)
+        row += 1
+
         grid.addWidget(QLabel(self._t("TLI_value") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_TLI_value"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_TLI_value"), row, 1)
         grid.addWidget(self.TLI_value_field, row, 2)
         row += 1
         
         grid.addWidget(QLabel(self._t("850_RSX_tag") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_850_RSX_tag"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_850_RSX_tag"), row, 1)
         grid.addWidget(self.rsx_850_tag_field, row, 2)
         row += 1
         
         grid.addWidget(QLabel(self._t("850_TLI_tag") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_850_TLI_tag"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_850_TLI_tag"), row, 1)
         grid.addWidget(self.tli_850_tag_field, row, 2)
         row += 1
         
         grid.addWidget(QLabel(self._t("sourcing_group_id") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_sourcing_group_id"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_sourcing_group_id"), row, 1)
         grid.addWidget(self.sourcing_group_combo, row, 2)
         row += 1
         
         grid.addWidget(QLabel(self._t("is_on_detail_level") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_is_on_detail_level"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_is_on_detail_level"), row, 1)
         grid.addWidget(self.is_on_detail_level_check, row, 2)
         row += 1
         
         grid.addWidget(QLabel(self._t("is_partnumber") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_is_partnumber"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_is_partnumber"), row, 1)
         grid.addWidget(self.is_partnumber_check, row, 2)
         row += 1
         
         grid.addWidget(QLabel(self._t("855_RSX_path") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_855_RSX_path"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_855_RSX_path"), row, 1)
         grid.addWidget(self.rsx_855_path_field, row, 2)
         row += 1
         grid.addWidget(QLabel(self._t("put_in_855_by_default") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_put_in_855_by_default"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_put_in_855_by_default"), row, 1)
         grid.addWidget(self.put_in_855_by_default_check, row, 2)
         row += 1
         
         grid.addWidget(QLabel(self._t("856_RSX_path") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_856_RSX_path"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_856_RSX_path"), row, 1)
         grid.addWidget(self.rsx_856_path_field, row, 2)
         row += 1
         grid.addWidget(QLabel(self._t("put_in_856_by_default") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_put_in_856_by_default"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_put_in_856_by_default"), row, 1)
         grid.addWidget(self.put_in_856_by_default_check, row, 2)
         row += 1
         
         grid.addWidget(QLabel(self._t("810_RSX_path") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_810_RSX_path"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_810_RSX_path"), row, 1)
         grid.addWidget(self.rsx_810_path_field, row, 2)
         row += 1
         grid.addWidget(QLabel(self._t("put_in_810_by_default") + ":"), row, 0)
-        grid.addWidget(self._create_help_button("desc_put_in_810_by_default"), row, 1)
+        grid.addWidget(self._create_help_button("db_desc_put_in_810_by_default"), row, 1)
         grid.addWidget(self.put_in_810_by_default_check, row, 2)
 
         scroll_layout.addLayout(grid)
@@ -900,6 +938,8 @@ class ItemDialog(QDialog):
             self.put_in_856_by_default_check.setChecked(self.item_data.get("put_in_856_by_default", False))
             self.rsx_810_path_field.setText(self.item_data["810_RSX_path"])
             self.put_in_810_by_default_check.setChecked(self.item_data.get("put_in_810_by_default", False))
+            self.extra_record_defining_rsx_tag_field.setText(self.item_data.get("extra_record_defining_rsx_tag", ""))
+            self.extra_record_defining_qual_field.setText(self.item_data.get("extra_record_defining_qual", ""))
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -931,6 +971,8 @@ class ItemDialog(QDialog):
         put_in_856_by_default = self.put_in_856_by_default_check.isChecked()
         rsx_810_path = self.rsx_810_path_field.text().strip()
         put_in_810_by_default = self.put_in_810_by_default_check.isChecked()
+        extra_record_defining_rsx_tag = self.extra_record_defining_rsx_tag_field.text().strip() or None
+        extra_record_defining_qual = self.extra_record_defining_qual_field.text().strip() or None
 
         if not all([
             edi_segment,
@@ -964,6 +1006,8 @@ class ItemDialog(QDialog):
                     put_in_856_by_default,
                     rsx_810_path,
                     put_in_810_by_default,
+                    extra_record_defining_rsx_tag,
+                    extra_record_defining_qual,
                 )
             else:
                 self.database.create_item(
@@ -982,6 +1026,8 @@ class ItemDialog(QDialog):
                     put_in_856_by_default,
                     rsx_810_path,
                     put_in_810_by_default,
+                    extra_record_defining_rsx_tag,
+                    extra_record_defining_qual,
                 )
         except DuplicateItemError as e:
             # Handle uniqueness constraint violation with localized message
@@ -1048,29 +1094,39 @@ class OrderPathDialog(QDialog):
         grid.setColumnStretch(2, 1)  # Make input field column stretchable
 
         self.order_path_field = QLineEdit()
-        self.order_path_field.setToolTip(self._t("desc_order_path"))
+        self.order_path_field.setToolTip(self._t("db_desc_order_path"))
         self.order_path_field.setMinimumWidth(400)
+
+        self.order_change_path_field = QLineEdit()
+        self.order_change_path_field.setToolTip(self._t("db_desc_order_change_path"))
+        self.order_change_path_field.setMinimumWidth(400)
         
         self.java_code_wrapper_field = QTextEdit()
-        self.java_code_wrapper_field.setToolTip(self._t("desc_java_code_wrapper"))
+        self.java_code_wrapper_field.setToolTip(self._t("db_desc_java_code_wrapper"))
         self.java_code_wrapper_field.setMinimumWidth(400)
         self.java_code_wrapper_field.setMinimumHeight(150)  # 7 rows approximately
         self.java_code_wrapper_field.setMaximumHeight(150)
 
         # Row 0: order_path
         grid.addWidget(QLabel(self._t("order_path") + ":"), 0, 0)
-        grid.addWidget(self._create_help_button("desc_order_path"), 0, 1)
+        grid.addWidget(self._create_help_button("db_desc_order_path"), 0, 1)
         grid.addWidget(self.order_path_field, 0, 2)
-        
-        # Row 1: java_code_wrapper
-        grid.addWidget(QLabel(self._t("java_code_wrapper") + ":"), 1, 0)
-        grid.addWidget(self._create_help_button("desc_java_code_wrapper"), 1, 1)
-        grid.addWidget(self.java_code_wrapper_field, 1, 2)
+
+        # Row 1: order_change_path
+        grid.addWidget(QLabel(self._t("order_change_path") + ":"), 1, 0)
+        grid.addWidget(self._create_help_button("db_desc_order_change_path"), 1, 1)
+        grid.addWidget(self.order_change_path_field, 1, 2)
+
+        # Row 2: java_code_wrapper
+        grid.addWidget(QLabel(self._t("java_code_wrapper") + ":"), 2, 0)
+        grid.addWidget(self._create_help_button("db_desc_java_code_wrapper"), 2, 1)
+        grid.addWidget(self.java_code_wrapper_field, 2, 2)
         
         layout.addLayout(grid)
 
         if self.path_data:
             self.order_path_field.setText(self.path_data["order_path"])
+            self.order_change_path_field.setText(self.path_data.get("order_change_path", ""))
             java_wrapper = self.path_data.get("java_code_wrapper", "")
             self.java_code_wrapper_field.setPlainText(java_wrapper)
 
@@ -1084,9 +1140,10 @@ class OrderPathDialog(QDialog):
     def accept_dialog(self) -> None:
         """Handle OK button click"""
         order_path = self.order_path_field.text().strip()
+        order_change_path = self.order_change_path_field.text().strip()
         java_code_wrapper = self.java_code_wrapper_field.toPlainText().strip()
 
-        if not order_path:
+        if not order_path or not order_change_path:
             QMessageBox.warning(self, self._t("error"), self._t("fill_all_fields"))
             return
 
@@ -1094,11 +1151,13 @@ class OrderPathDialog(QDialog):
             self.database.update_order_path(
                 self.path_data["order_path_properties_id"],
                 order_path,
+                order_change_path,
                 java_code_wrapper if java_code_wrapper else None,
             )
         else:
             self.database.create_order_path(
                 order_path,
+                order_change_path,
                 java_code_wrapper if java_code_wrapper else None,
             )
 

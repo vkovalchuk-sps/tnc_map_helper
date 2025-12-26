@@ -35,6 +35,8 @@ class Item:
     tli_value: str = ""
     rsx_tag_850: str = ""
     tli_tag_850: str = ""
+    extra_record_defining_rsx_tag: str = ""
+    extra_record_defining_qual: str = ""
     is_on_detail_level: bool = False
     is_partnumber: bool = False
     rsx_path_855: str = ""
@@ -53,6 +55,8 @@ class Item:
     
     # Order path properties from DB
     order_path_properties_id: Optional[int] = None
+    order_path: str = ""
+    order_change_path: str = ""
     java_code_wrapper: str = ""
     
     # Parsing errors
@@ -71,13 +75,13 @@ class Item:
         """
         line = line.strip()
         
-        # Якщо немає двокрапки — це просте значення
+        # If there is no colon, this is a simple value
         if ":" not in line:
             return line
         
-        # Знаходимо всі ключі та їх значення
-        # Ключ = непробільні символи, потім :, пробіли
-        # Значення = все до наступного ключа або кінця рядка
+        # Find all keys and their values
+        # Key = non-whitespace characters followed by ':' and spaces
+        # Value = everything until the next key or end of line
         pairs = re.findall(
             r'(\S+):\s*([^:]+?)(?=\s*\S+:|$)',
             line
@@ -87,16 +91,17 @@ class Item:
             if "850" in key:
                 return value.strip()
         
-        # Якщо ключ 850 не знайдено — повертаємо рядок
+        # If key 850 is not found, return the original line
         return line
     
     @staticmethod
     def normalize_segment(seg: str) -> str:
         """
-        Нормалізація сегмента:
-        - перетворює всі варіанти, що починаються з "P0" на "PO"
-          (щоб P01, P04 тощо ставали PO1, PO4)
-        - можна додати інші правила, якщо буде потрібно
+                Normalize segment name.
+
+                - Converts all variants that start with "P0" to "PO"
+                    (so P01, P04, etc. become PO1, PO4)
+                - Additional normalization rules can be added later if needed
         """
         if seg.startswith("P0"):
             return "PO" + seg[2:]
@@ -118,129 +123,132 @@ class Item:
         if not text:
             return "", "", ""
 
-        # Спеціальна обробка значень типу P0401, P0402, P0101 тощо
-        # P0401 -> seg = PO4, el = 01; P0101 -> PO1, 01; P0402 -> PO4, 02 і т.д.
+        # Special handling for values like P0401, P0402, P0101, etc.
+        # P0401 -> seg = PO4, el = 01; P0101 -> PO1, 01; P0402 -> PO4, 02, etc.
         m = re.match(r'^P0(\d)(\d{2})$', text)
         if m:
             seg_digit, el = m.groups()
             seg = f"PO{seg_digit}"
             return seg, el, ""
         
-        # Формат: SEGNN (SEGMM = QUAL)
+        # Format: SEGNN (SEGMM = QUAL)
         m = re.match(r'^(\S+?)(\d+)\s*\(\s*(\S+?)(\d+)\s*=\s*([A-Za-z0-9]+)\s*\)$', text)
         if m:
             seg_part, digits, qseg, qel, qual = m.groups()
-            # Якщо номер елемента має 3+ цифри, перша цифра належить сегменту
+            # If the element number has 3 or more digits, the first digit belongs to the segment
             if len(digits) >= 3:
-                # Беремо першу цифру для сегменту, останні 2 для номера
-                # Наприклад, N403 -> seg = N4, el = 03
+                # Take the first digit for the segment and the last 2 for the element number
+                # For example, N403 -> seg = N4, el = 03
                 seg = seg_part + digits[0]
-                el = digits[-2:]  # Останні 2 цифри
+                el = digits[-2:]  # Last 2 digits
             elif len(digits) == 2:
-                # Якщо 2 цифри, перевіряємо довжину сегменту
-                # Якщо сегмент довший за 1 символ (наприклад PID, N1, N2), то сегмент повний і обидві цифри - номер елемента
-                # Якщо сегмент 1 символ (наприклад N), то перша цифра йде до сегменту, друга до номера
+                # If there are 2 digits, check the segment length
+                # If the segment is longer than 1 character (e.g. PID, N1, N2), the segment is complete
+                #   and both digits are the element number
+                # If the segment is 1 character (e.g. N), the first digit goes to the segment, the second to the element number
                 if len(seg_part) > 1:
-                    # Сегмент повний, обидві цифри - номер елемента
-                    # Наприклад, PID05 (PID02=08) -> seg = PID, el = 05
+                    # Segment is complete, both digits are the element number
+                    # For example, PID05 (PID02=08) -> seg = PID, el = 05
                     seg = seg_part
                     el = digits.zfill(2)
                 else:
-                    # Сегмент 1 символ, перша цифра йде до сегменту
-                    # Наприклад, N45 (N402=08) -> seg = N4, el = 05
+                    # Segment is 1 character, the first digit goes to the segment
+                    # For example, N45 (N402=08) -> seg = N4, el = 05
                     seg = seg_part + digits[0]
                     el = digits[1].zfill(2)
             else:
-                # Якщо 1 цифра, вона йде до номера
+                # If there is 1 digit, it goes to the element number
                 seg = seg_part
                 el = digits.zfill(2)
             seg = Item.normalize_segment(seg)
             return seg, el, qual
         
-        # Формат: SEGNN (QUAL)
+        # Format: SEGNN (QUAL)
         m = re.match(r'^(\S+?)(\d+)\s*\(\s*([A-Za-z0-9]+)\s*\)$', text)
         if m:
             seg_part, digits, qual = m.groups()
-            # Якщо номер елемента має 3+ цифри, перша цифра належить сегменту
+            # If the element number has 3 or more digits, the first digit belongs to the segment
             if len(digits) >= 3:
-                # Беремо першу цифру для сегменту, останні 2 для номера
-                # Наприклад, N403 -> seg = N4, el = 03
+                # Take the first digit for the segment and the last 2 for the element number
+                # For example, N403 -> seg = N4, el = 03
                 seg = seg_part + digits[0]
-                el = digits[-2:]  # Останні 2 цифри
+                el = digits[-2:]  # Last 2 digits
             elif len(digits) == 2:
-                # Якщо 2 цифри, перевіряємо довжину сегменту
-                # Якщо сегмент довший за 1 символ (наприклад PID, N1, N2), то сегмент повний і обидві цифри - номер елемента
-                # Якщо сегмент 1 символ (наприклад N), то перша цифра йде до сегменту, друга до номера
+                # If there are 2 digits, check the segment length
+                # If the segment is longer than 1 character (e.g. PID, N1, N2), the segment is complete
+                #   and both digits are the element number
+                # If the segment is 1 character (e.g. N), the first digit goes to the segment, the second to the element number
                 if len(seg_part) > 1:
-                    # Сегмент повний, обидві цифри - номер елемента
-                    # Наприклад, PID05 (08) -> seg = PID, el = 05
+                    # Segment is complete, both digits are the element number
+                    # For example, PID05 (08) -> seg = PID, el = 05
                     seg = seg_part
                     el = digits.zfill(2)
                 else:
-                    # Сегмент 1 символ, перша цифра йде до сегменту
-                    # Наприклад, N45 (08) -> seg = N4, el = 05
+                    # Segment is 1 character, the first digit goes to the segment
+                    # For example, N45 (08) -> seg = N4, el = 05
                     seg = seg_part + digits[0]
                     el = digits[1].zfill(2)
             else:
-                # Якщо 1 цифра, вона йде до номера
+                # If there is 1 digit, it goes to the element number
                 seg = seg_part
                 el = digits.zfill(2)
             seg = Item.normalize_segment(seg)
             return seg, el, qual
         
-        # Формат: SEGNN (наприклад N404 -> N4, 04)
-        # Спочатку намагаємося знайти сегмент з цифрою на кінці (наприклад N4, PO1)
-        # Якщо номер елемента має більше 2 цифр, беремо останні 2
-        # Важливо: цей паттерн має спрацьовувати тільки якщо номер елемента має >= 2 цифри,
-        # щоб уникнути неправильного парсингу "PID05" як "PID0" + "5"
+        # Format: SEGNN (for example N404 -> N4, 04)
+        # First try to find a segment that already ends with a digit (for example N4, PO1)
+        # If the element number has more than 2 digits, take the last 2
+        # Important: this pattern should trigger only if the element number has 2 or more digits
+        # to avoid parsing "PID05" incorrectly as "PID0" + "5"
         m = re.match(r'^([A-Za-z]+\d)(\d{2,})$', text)
         if m:
             seg, el = m.groups()
             seg = Item.normalize_segment(seg)
-            # Обмежуємо edi_element_number до 2 цифр (беремо останні 2)
-            # Наприклад, N404 -> N4, 04 (останні 2 цифри з 404)
+            # Limit edi_element_number to 2 digits (take the last 2)
+            # For example, N404 -> N4, 04 (last 2 digits from 404)
             el = el[-2:].zfill(2) if len(el) > 2 else el.zfill(2)
             return seg, el, ""
         
-        # Формат: SEGNN (якщо сегмент без цифри на кінці, наприклад N404 де N - сегмент, 404 - номер)
-        # Але якщо номер має 3+ цифри, можливо це N4 + 04
+        # Format: SEGNN (when the segment has no trailing digit, for example N404 where N is the segment and 404 is the number)
+        # But if the number has 3 or more digits, it may actually be N4 + 04
         m = re.match(r'^([A-Za-z]+)(\d+)$', text)
         if m:
             seg_part, digits = m.groups()
-            # Спеціальний універсальний випадок для значень типу P0401, P0101 тощо
-            # P0401 -> seg = PO4, el = 01; P0101 -> PO1, 01; P0402 -> PO4, 02 і т.д.
+            # Special generic case for values like P0401, P0101, etc.
+            # P0401 -> seg = PO4, el = 01; P0101 -> PO1, 01; P0402 -> PO4, 02, etc.
             if seg_part == "P" and len(digits) >= 3 and digits[0] == "0":
                 seg = "PO" + digits[1]
                 el = digits[-2:].zfill(2)
-            # Загальна логіка для інших сегментів
+            # General logic for other segments
             elif len(digits) >= 3:
-                # Беремо першу цифру для сегменту, останні 2 для номера
-                # Наприклад, N404 -> seg = N4, el = 04
+                # Take the first digit for the segment and the last 2 for the element number
+                # For example, N404 -> seg = N4, el = 04
                 seg = seg_part + digits[0]
-                el = digits[-2:]  # Останні 2 цифри
+                el = digits[-2:]  # Last 2 digits
             elif len(digits) == 2:
-                # Якщо 2 цифри, перевіряємо довжину сегменту
-                # Якщо сегмент довший за 1 символ (наприклад PID, N1, N2), то сегмент повний і обидві цифри - номер елемента
-                # Якщо сегмент 1 символ (наприклад N), то перша цифра йде до сегменту, друга до номера
+                # If there are 2 digits, check the segment length
+                # If the segment is longer than 1 character (e.g. PID, N1, N2), the segment is complete
+                #   and both digits are the element number
+                # If the segment is 1 character (e.g. N), the first digit goes to the segment, the second to the element number
                 if len(seg_part) > 1:
-                    # Сегмент повний, обидві цифри - номер елемента
-                    # Наприклад, PID05 -> seg = PID, el = 05
+                    # Segment is complete, both digits are the element number
+                    # For example, PID05 -> seg = PID, el = 05
                     seg = seg_part
                     el = digits.zfill(2)
                 else:
-                    # Сегмент 1 символ, перша цифра йде до сегменту
-                    # Наприклад, N45 -> seg = N4, el = 05
+                    # Segment is 1 character, the first digit goes to the segment
+                    # For example, N45 -> seg = N4, el = 05
                     seg = seg_part + digits[0]
                     el = digits[1].zfill(2)
             else:
-                # Якщо 1 цифра, вона йде до номера, але сегмент залишається без змін
-                # Наприклад, N4 -> seg = N, el = 04
+                # If there is 1 digit, it goes to the element number but the segment stays unchanged
+                # For example, N4 -> seg = N, el = 04
                 seg = seg_part
                 el = digits.zfill(2)
             seg = Item.normalize_segment(seg)
             return seg, el, ""
         
-        # Нічого не підійшло → повертаємо пусті поля
+        # Nothing matched → return empty fields
         return "", "", ""
 
 
@@ -356,24 +364,69 @@ class SpreadsheetParser:
                     items.append(item)
                     continue
                 
-                # Parse EDI info
-                try:
-                    edi_segment, edi_element_number, edi_qualifier = Item.parse_edi_info(
-                        item.spreadsheet_edi_info_text_cleared
+                # Special handling for N104 with conditions in parentheses
+                special_n104_handled = False
+                cleared_text = item.spreadsheet_edi_info_text_cleared.strip()
+
+                if cleared_text:
+                    # Case 1: N104 (N101=VN and N103=92) -> segment N1, element 04, qualifier taken from N101
+                    m = re.match(
+                        r'^N104\s*\(\s*N101\s*=\s*([A-Za-z0-9]+)\s+and\s+N103\s*=\s*([A-Za-z0-9]+)\s*\)$',
+                        cleared_text,
+                        re.IGNORECASE,
                     )
-                    item.edi_segment = edi_segment
-                    item.edi_element_number = edi_element_number
-                    item.edi_qualifier = edi_qualifier
-                except Exception as e:
-                    error_msg = (
-                        f"{self.t['error_column']} {self._column_letter(col_idx)}: "
-                        f"{self.t['error_parse_edi_info']}: {str(e)}"
-                    )
-                    column_errors.append(error_msg)
-                    all_errors.append(error_msg)
-                    item.parsing_errors = column_errors
-                    items.append(item)
-                    continue
+                    if m:
+                        qual_from_n101 = m.group(1).strip()
+                        item.edi_segment = "N1"
+                        item.edi_element_number = "04"
+                        item.edi_qualifier = qual_from_n101
+                        special_n104_handled = True
+                    else:
+                        # Case 2: N104 (N103=92) -> segment N1, element 04, qualifier is inherited
+                        m = re.match(
+                            r'^N104\s*\(\s*N103\s*=\s*([A-Za-z0-9]+)\s*\)$',
+                            cleared_text,
+                            re.IGNORECASE,
+                        )
+                        if m:
+                            # Take the previous Item if it exists
+                            if items and items[-1].edi_segment == "N1":
+                                prev_item = items[-1]
+                                item.edi_segment = "N1"
+                                item.edi_element_number = "04"
+                                item.edi_qualifier = prev_item.edi_qualifier
+                                special_n104_handled = True
+                            else:
+                                # If there is no previous N1 Item, treat it as a parsing error
+                                error_msg = (
+                                    f"{self.t['error_column']} {self._column_letter(col_idx)}: "
+                                    f"{self.t['error_n104_missing_previous_qualifier']}"
+                                )
+                                column_errors.append(error_msg)
+                                all_errors.append(error_msg)
+                                item.parsing_errors = column_errors
+                                items.append(item)
+                                continue
+
+                # Parse EDI info (for all other cases)
+                if not special_n104_handled:
+                    try:
+                        edi_segment, edi_element_number, edi_qualifier = Item.parse_edi_info(
+                            item.spreadsheet_edi_info_text_cleared
+                        )
+                        item.edi_segment = edi_segment
+                        item.edi_element_number = edi_element_number
+                        item.edi_qualifier = edi_qualifier
+                    except Exception as e:
+                        error_msg = (
+                            f"{self.t['error_column']} {self._column_letter(col_idx)}: "
+                            f"{self.t['error_parse_edi_info']}: {str(e)}"
+                        )
+                        column_errors.append(error_msg)
+                        all_errors.append(error_msg)
+                        item.parsing_errors = column_errors
+                        items.append(item)
+                        continue
                 
                 # Match with database
                 if item.edi_segment and item.edi_element_number:
@@ -516,6 +569,8 @@ class SpreadsheetParser:
             item.tli_value = match.get("TLI_value", "")
             item.rsx_tag_850 = match.get("850_RSX_tag", "")
             item.tli_tag_850 = match.get("850_TLI_tag", "")
+            item.extra_record_defining_rsx_tag = match.get("extra_record_defining_rsx_tag") or ""
+            item.extra_record_defining_qual = match.get("extra_record_defining_qual") or ""
             item.is_on_detail_level = bool(match.get("is_on_detail_level", False))
             item.is_partnumber = bool(match.get("is_partnumber", False))
             item.rsx_path_855 = match.get("855_RSX_path", "")
@@ -542,6 +597,8 @@ class SpreadsheetParser:
                         item.order_path_properties_id = order_path_id
                         order_path = self.database.get_order_path(order_path_id)
                         if order_path:
+                            item.order_path = order_path.get("order_path", "")
+                            item.order_change_path = order_path.get("order_change_path", "")
                             item.java_code_wrapper = order_path.get("java_code_wrapper", "")
         
         return errors

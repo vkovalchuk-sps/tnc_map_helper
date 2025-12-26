@@ -326,11 +326,16 @@ class CSVArchiveParser:
             
             result_rows[original_idx] = new_row
         
-        # Convert back to CSV string
+        # Convert back to CSV string (with proper line endings)
         output = io.StringIO()
-        writer = csv.writer(output)
+        writer = csv.writer(output, lineterminator='\n')
         for row in result_rows:
             writer.writerow(row)
         
-        return output.getvalue()
+        # Remove any trailing newline if present
+        result = output.getvalue()
+        if result.endswith('\n'):
+            result = result[:-1]
+        
+        return result
 

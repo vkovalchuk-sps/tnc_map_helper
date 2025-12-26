@@ -14,9 +14,13 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QVBoxLayout,
     QWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
+    QAbstractItemView,
 )
 
-from application.tnc_parser import InboundDocScenario
+from application.tommm_parser import InboundDocScenario
 from application.translations import TRANSLATIONS
 
 
@@ -178,218 +182,107 @@ class ScenariosInfoDialog(QDialog):
             expanded_widget = QWidget()
             expanded_layout = QVBoxLayout()
             expanded_widget.setLayout(expanded_layout)
-            
+
+            table = QTableWidget()
+            table.setColumnCount(2)
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            table.horizontalHeader().setVisible(False)
+            table.verticalHeader().setVisible(False)
+            table.setShowGrid(True)
+            table.setAlternatingRowColors(True)
+            header = table.horizontalHeader()
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+
+            current_row = 0
+
+            def add_simple_row(label_text: str, value_text: str) -> None:
+                nonlocal current_row
+                table.insertRow(current_row)
+                # Keep description in a single line
+                desc_item = QTableWidgetItem(label_text)
+                desc_item.setFlags(desc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                table.setItem(current_row, 0, desc_item)
+                value_item = QTableWidgetItem(value_text)
+                value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                table.setItem(current_row, 1, value_item)
+                current_row += 1
+
+            def add_button_row(label_text: str, content: str, title: str) -> None:
+                nonlocal current_row
+                table.insertRow(current_row)
+                # Keep description in a single line
+                desc_item = QTableWidgetItem(label_text)
+                desc_item.setFlags(desc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                table.setItem(current_row, 0, desc_item)
+                button = QPushButton(self.t.get("show_content", "Show Content"))
+                button.setFixedWidth(140)
+                button.setFixedHeight(24)
+                button.clicked.connect(
+                    lambda checked, text=content, ttitle=title: self._show_csv_content(text, ttitle)
+                )
+                table.setCellWidget(current_row, 1, button)
+                current_row += 1
+
             # Name field
-            name_layout = QHBoxLayout()
-            name_label_text = self._wrap_text(field_descriptions['name'])
-            name_label = QLabel(name_label_text)
-            name_label.setMinimumWidth(200)
-            name_label.setWordWrap(True)
-            name_value = QLabel(scenario.name)
-            name_layout.addWidget(name_label)
-            name_layout.addWidget(name_value)
-            name_layout.addStretch()
-            expanded_layout.addLayout(name_layout)
-            
-            # Key field (moved to second line in expanded view)
-            key_layout = QHBoxLayout()
-            key_label_text = self._wrap_text(field_descriptions['key'])
-            key_label = QLabel(key_label_text)
-            key_label.setMinimumWidth(200)
-            key_label.setWordWrap(True)
-            key_value = QLabel(scenario.key)
-            key_layout.addWidget(key_label)
-            key_layout.addWidget(key_value)
-            key_layout.addStretch()
-            expanded_layout.addLayout(key_layout)
-            
-            # Document number field (moved to second line in expanded view)
-            doc_num_layout = QHBoxLayout()
-            doc_num_label_text = self._wrap_text(field_descriptions['document_number'])
-            doc_num_label = QLabel(doc_num_label_text)
-            doc_num_label.setMinimumWidth(200)
-            doc_num_label.setWordWrap(True)
-            doc_num_value = QLabel(str(scenario.document_number))
-            doc_num_layout.addWidget(doc_num_label)
-            doc_num_layout.addWidget(doc_num_value)
-            doc_num_layout.addStretch()
-            expanded_layout.addLayout(doc_num_layout)
-            
-            # Display key_with_date only if it's not empty (always available)
+            add_simple_row(field_descriptions["name"], scenario.name)
+
+            # Key field
+            add_simple_row(field_descriptions["key"], scenario.key)
+
+            # Document number field
+            add_simple_row(field_descriptions["document_number"], str(scenario.document_number))
+
+            # key_with_date if present
             if scenario.key_with_date:
-                key_with_date_layout = QHBoxLayout()
-                key_with_date_label_text = self._wrap_text(self.t.get('scenario_key_with_date', 'Key (with date mask)'))
-                key_with_date_label = QLabel(key_with_date_label_text)
-                key_with_date_label.setMinimumWidth(200)
-                key_with_date_label.setWordWrap(True)
-                key_with_date_value = QLabel(scenario.key_with_date)
-                key_with_date_layout.addWidget(key_with_date_label)
-                key_with_date_layout.addWidget(key_with_date_value)
-                key_with_date_layout.addStretch()
-                expanded_layout.addLayout(key_with_date_layout)
-            
+                add_simple_row(self.t.get("scenario_key_with_date", "Key (with date mask)"), scenario.key_with_date)
+
             # TSET Code and basic counts (only if CSV parsing was successful)
             if self.csv_parse_success:
-                # TSET Code
-                tset_layout = QHBoxLayout()
-                tset_label_text = self._wrap_text(field_descriptions['tset_code'])
-                tset_label = QLabel(tset_label_text)
-                tset_label.setMinimumWidth(200)
-                tset_label.setWordWrap(True)
-                tset_value = QLabel(str(scenario.tset_code) if scenario.tset_code else "")
-                tset_layout.addWidget(tset_label)
-                tset_layout.addWidget(tset_value)
-                tset_layout.addStretch()
-                expanded_layout.addLayout(tset_layout)
-                
-                # Number of TLI
-                tli_layout = QHBoxLayout()
-                tli_label_text = self._wrap_text(field_descriptions['number_of_tli'])
-                tli_label = QLabel(tli_label_text)
-                tli_label.setMinimumWidth(200)
-                tli_label.setWordWrap(True)
-                tli_value = QLabel(str(scenario.number_of_tli))
-                tli_layout.addWidget(tli_label)
-                tli_layout.addWidget(tli_value)
-                tli_layout.addStretch()
-                expanded_layout.addLayout(tli_layout)
-                
-                # Number of Lines
-                lines_layout = QHBoxLayout()
-                lines_label_text = self._wrap_text(field_descriptions['number_of_lines'])
-                lines_label = QLabel(lines_label_text)
-                lines_label.setMinimumWidth(200)
-                lines_label.setWordWrap(True)
-                lines_value = QLabel(str(scenario.number_of_lines))
-                lines_layout.addWidget(lines_label)
-                lines_layout.addWidget(lines_value)
-                lines_layout.addStretch()
-                expanded_layout.addLayout(lines_layout)
+                add_simple_row(field_descriptions["tset_code"], str(scenario.tset_code) if scenario.tset_code else "")
+                add_simple_row(field_descriptions["number_of_tli"], str(scenario.number_of_tli))
+                add_simple_row(field_descriptions["number_of_lines"], str(scenario.number_of_lines))
 
-            # These flags should be visible even without successful CSV parsing
-            # Includes 855 Docs
-            includes_855_layout = QHBoxLayout()
-            includes_855_label_text = self._wrap_text(field_descriptions['includes_855_docs'])
-            includes_855_label = QLabel(includes_855_label_text)
-            includes_855_label.setMinimumWidth(200)
-            includes_855_label.setWordWrap(True)
-            includes_855_value = QLabel("Yes" if scenario.includes_855_docs else "No")
-            includes_855_layout.addWidget(includes_855_label)
-            includes_855_layout.addWidget(includes_855_value)
-            includes_855_layout.addStretch()
-            expanded_layout.addLayout(includes_855_layout)
+            # Flags (always visible)
+            add_simple_row(field_descriptions["includes_855_docs"], "Yes" if scenario.includes_855_docs else "No")
+            add_simple_row(field_descriptions["includes_856_docs"], "Yes" if scenario.includes_856_docs else "No")
+            add_simple_row(field_descriptions["includes_810_docs"], "Yes" if scenario.includes_810_docs else "No")
+            add_simple_row(field_descriptions["is_changed_by_850_scenario"], "Yes" if scenario.is_changed_by_850_scenario else "No")
+            add_simple_row(field_descriptions["is_changer_850"], "Yes" if scenario.is_changer_850 else "No")
+            add_simple_row(field_descriptions["is_consolidated"], "Yes" if scenario.is_consolidated else "No")
 
-            # Includes 856 Docs
-            includes_856_layout = QHBoxLayout()
-            includes_856_label_text = self._wrap_text(field_descriptions['includes_856_docs'])
-            includes_856_label = QLabel(includes_856_label_text)
-            includes_856_label.setMinimumWidth(200)
-            includes_856_label.setWordWrap(True)
-            includes_856_value = QLabel("Yes" if scenario.includes_856_docs else "No")
-            includes_856_layout.addWidget(includes_856_label)
-            includes_856_layout.addWidget(includes_856_value)
-            includes_856_layout.addStretch()
-            expanded_layout.addLayout(includes_856_layout)
-
-            # Includes 810 Docs
-            includes_810_layout = QHBoxLayout()
-            includes_810_label_text = self._wrap_text(field_descriptions['includes_810_docs'])
-            includes_810_label = QLabel(includes_810_label_text)
-            includes_810_label.setMinimumWidth(200)
-            includes_810_label.setWordWrap(True)
-            includes_810_value = QLabel("Yes" if scenario.includes_810_docs else "No")
-            includes_810_layout.addWidget(includes_810_label)
-            includes_810_layout.addWidget(includes_810_value)
-            includes_810_layout.addStretch()
-            expanded_layout.addLayout(includes_810_layout)
-
-            # Is Changed by 850 Scenario
-            changed_850_layout = QHBoxLayout()
-            changed_850_label_text = self._wrap_text(field_descriptions['is_changed_by_850_scenario'])
-            changed_850_label = QLabel(changed_850_label_text)
-            changed_850_label.setMinimumWidth(200)
-            changed_850_label.setWordWrap(True)
-            changed_850_value = QLabel("Yes" if scenario.is_changed_by_850_scenario else "No")
-            changed_850_layout.addWidget(changed_850_label)
-            changed_850_layout.addWidget(changed_850_value)
-            changed_850_layout.addStretch()
-            expanded_layout.addLayout(changed_850_layout)
-
-            # Is Changer 850
-            changer_850_layout = QHBoxLayout()
-            changer_850_label_text = self._wrap_text(field_descriptions['is_changer_850'])
-            changer_850_label = QLabel(changer_850_label_text)
-            changer_850_label.setMinimumWidth(200)
-            changer_850_label.setWordWrap(True)
-            changer_850_value = QLabel("Yes" if scenario.is_changer_850 else "No")
-            changer_850_layout.addWidget(changer_850_label)
-            changer_850_layout.addWidget(changer_850_value)
-            changer_850_layout.addStretch()
-            expanded_layout.addLayout(changer_850_layout)
-
-            # Is Consolidated
-            consolidated_layout = QHBoxLayout()
-            consolidated_label_text = self._wrap_text(field_descriptions['is_consolidated'])
-            consolidated_label = QLabel(consolidated_label_text)
-            consolidated_label.setMinimumWidth(200)
-            consolidated_label.setWordWrap(True)
-            consolidated_value = QLabel("Yes" if scenario.is_consolidated else "No")
-            consolidated_layout.addWidget(consolidated_label)
-            consolidated_layout.addWidget(consolidated_value)
-            consolidated_layout.addStretch()
-            expanded_layout.addLayout(consolidated_layout)
-
-            # CSV design filename (from archive) if available, show after consolidated flag
+            # CSV design filename (from archive) if available
             if self.csv_parse_success and getattr(scenario, "csv_design_filename", ""):
-                csv_name_layout = QHBoxLayout()
-                csv_name_label_text = self._wrap_text(field_descriptions['csv_design_filename'])
-                csv_name_label = QLabel(csv_name_label_text)
-                csv_name_label.setMinimumWidth(200)
-                csv_name_label.setWordWrap(True)
-                csv_name_value = QLabel(scenario.csv_design_filename)
-                csv_name_layout.addWidget(csv_name_label)
-                csv_name_layout.addWidget(csv_name_value)
-                csv_name_layout.addStretch()
-                expanded_layout.addLayout(csv_name_layout)
+                add_simple_row(field_descriptions["csv_design_filename"], scenario.csv_design_filename)
 
-            # CSV Design field with button (show only if content exists and CSV parsing succeeded)
+            # CSV Design content button
             if self.csv_parse_success and scenario.csv_design:
-                csv_design_layout = QHBoxLayout()
-                csv_design_label_text = self._wrap_text(field_descriptions['csv_design'])
-                csv_design_label = QLabel(csv_design_label_text)
-                csv_design_label.setMinimumWidth(200)
-                csv_design_label.setWordWrap(True)
-                csv_design_button = QPushButton(self.t.get("show_content", "Show Content"))
-                # Capture content and title in local variables for proper closure
-                csv_content = scenario.csv_design
-                csv_title = field_descriptions['csv_design']
-                csv_design_button.clicked.connect(
-                    lambda checked, content=csv_content, title=csv_title: self._show_csv_content(content, title)
-                )
-                csv_design_layout.addWidget(csv_design_label)
-                csv_design_layout.addWidget(csv_design_button)
-                csv_design_layout.addStretch()
-                expanded_layout.addLayout(csv_design_layout)
-            
-            # CSV Test File field with button (show only if content exists and CSV parsing succeeded)
+                add_button_row(field_descriptions["csv_design"], scenario.csv_design, field_descriptions["csv_design"])
+
+            # CSV Test File content button
             if self.csv_parse_success and scenario.csv_test_file:
-                csv_test_layout = QHBoxLayout()
-                csv_test_label_text = self._wrap_text(field_descriptions['csv_test_file'])
-                csv_test_label = QLabel(csv_test_label_text)
-                csv_test_label.setMinimumWidth(200)
-                csv_test_label.setWordWrap(True)
-                csv_test_button = QPushButton(self.t.get("show_content", "Show Content"))
-                # Capture content and title in local variables for proper closure
-                test_content = scenario.csv_test_file
-                test_title = field_descriptions['csv_test_file']
-                csv_test_button.clicked.connect(
-                    lambda checked, content=test_content, title=test_title: self._show_csv_content(content, title)
-                )
-                csv_test_layout.addWidget(csv_test_label)
-                csv_test_layout.addWidget(csv_test_button)
-                csv_test_layout.addStretch()
-                expanded_layout.addLayout(csv_test_layout)
-            
+                add_button_row(field_descriptions["csv_test_file"], scenario.csv_test_file, field_descriptions["csv_test_file"])
+
+            # Ensure the whole table is visible (no inner scrolling) and rows have equal minimal height
+            table.setWordWrap(False)
+            table.resizeRowsToContents()
+            base_height = table.fontMetrics().height() + 8
+            for r in range(table.rowCount()):
+                if table.rowHeight(r) < base_height:
+                    table.setRowHeight(r, base_height)
+
+            # Make first column slightly narrower (about 25% less than before)
+            table.setColumnWidth(0, 270)
+
+            header_height = table.horizontalHeader().height() if table.horizontalHeader().isVisible() else 0
+            total_height = header_height + 2 * table.frameWidth()
+            for r in range(table.rowCount()):
+                total_height += table.rowHeight(r)
+            table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            table.setMinimumHeight(total_height)
+            table.setMaximumHeight(total_height)
+
+            expanded_layout.addWidget(table)
             # Add expanded widget to group box
             scenario_layout.addWidget(expanded_widget)
             

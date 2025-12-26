@@ -238,20 +238,24 @@ class TOMMMParser:
                                         other_scenario[0].is_changer_850 = True
                                 break
             
-            # Check for is_consolidated (856 with key format "key_1 and key_2")
+            # Check for is_consolidated (856 with combined keys, e.g. "key_1 and key_2" or "key_1, key_2")
             for row_info in row_data:
                 if "856" in row_info["documents"]:
                     key, _ = self._normalize_key(row_info["key"])
-                    # Check if key contains " and " (format: "key_1 and key_2")
-                    if " and " in key:
-                        parts = key.split(" and ")
+                    # Consolidated keys can be separated either by " and " or by ","
+                    # Example formats:
+                    #   "KEY1 and KEY2"
+                    #   "KEY1, KEY2"
+                    # Use regex split to handle both separators
+                    if " and " in key or "," in key:
+                        parts = [p.strip() for p in re.split(r"\s+and\s+|,", key) if p.strip()]
                         if len(parts) == 2:
-                            key1 = parts[0].strip()
-                            key2 = parts[1].strip()
-                            # Mark scenarios with these keys as consolidated
+                            key1, key2 = parts
+                            # Mark related 850 scenarios as consolidated and as including 856
                             for scenario in scenarios:
-                                if scenario.key == key1 or scenario.key == key2:
+                                if scenario.document_number == 850 and (scenario.key == key1 or scenario.key == key2):
                                     scenario.is_consolidated = True
+                                    scenario.includes_856_docs = True
             
             # Check for success
             if len(scenarios) == 0:

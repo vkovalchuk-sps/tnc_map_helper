@@ -45,9 +45,16 @@ class Database:
             CREATE TABLE IF NOT EXISTS order_path_properties (
                 order_path_properties_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 order_path TEXT NOT NULL,
+                order_change_path TEXT NOT NULL,
                 java_code_wrapper TEXT
             )
         """)
+
+        # Ensure order_change_path column exists for older databases
+        if not self._table_has_column(cursor, "order_path_properties", "order_change_path"):
+            cursor.execute(
+                "ALTER TABLE order_path_properties ADD COLUMN order_change_path TEXT NOT NULL DEFAULT ''"
+            )
 
         # Create sourcing_group_properties table
         cursor.execute("""
@@ -122,16 +129,20 @@ class Database:
                 put_in_856_by_default INTEGER NOT NULL DEFAULT 0,
                 "810_RSX_path" TEXT NOT NULL,
                 put_in_810_by_default INTEGER NOT NULL DEFAULT 0,
+                extra_record_defining_rsx_tag TEXT,
+                extra_record_defining_qual TEXT,
                 FOREIGN KEY (sourcing_group_properties_id) 
                     REFERENCES sourcing_group_properties(sourcing_group_properties_id)
             )
         """)
 
-        # Ensure optional boolean columns exist for older databases
+        # Ensure optional columns exist for older databases
         additional_columns = [
             ("put_in_855_by_default", "ALTER TABLE item_properties ADD COLUMN put_in_855_by_default INTEGER NOT NULL DEFAULT 0"),
             ("put_in_856_by_default", "ALTER TABLE item_properties ADD COLUMN put_in_856_by_default INTEGER NOT NULL DEFAULT 0"),
             ("put_in_810_by_default", "ALTER TABLE item_properties ADD COLUMN put_in_810_by_default INTEGER NOT NULL DEFAULT 0"),
+            ("extra_record_defining_rsx_tag", "ALTER TABLE item_properties ADD COLUMN extra_record_defining_rsx_tag TEXT"),
+            ("extra_record_defining_qual", "ALTER TABLE item_properties ADD COLUMN extra_record_defining_qual TEXT"),
         ]
         for column_name, ddl in additional_columns:
             if not self._table_has_column(cursor, "item_properties", column_name):
@@ -155,17 +166,17 @@ class Database:
 
     # Order Path Properties CRUD operations
     def create_order_path(
-        self, order_path: str, java_code_wrapper: Optional[str] = None
+        self, order_path: str, order_change_path: str, java_code_wrapper: Optional[str] = None
     ) -> int:
         """Create a new order path property"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO order_path_properties (order_path, java_code_wrapper)
-            VALUES (?, ?)
+            INSERT INTO order_path_properties (order_path, order_change_path, java_code_wrapper)
+            VALUES (?, ?, ?)
             """,
-            (order_path, java_code_wrapper or ""),
+            (order_path, order_change_path, java_code_wrapper or ""),
         )
         conn.commit()
         path_id = cursor.lastrowid
@@ -206,6 +217,7 @@ class Database:
         self,
         path_id: int,
         order_path: str,
+        order_change_path: str,
         java_code_wrapper: Optional[str] = None,
     ) -> bool:
         """Update order path property"""
@@ -214,10 +226,10 @@ class Database:
         cursor.execute(
             """
             UPDATE order_path_properties
-            SET order_path = ?, java_code_wrapper = ?
+            SET order_path = ?, order_change_path = ?, java_code_wrapper = ?
             WHERE order_path_properties_id = ?
             """,
-            (order_path, java_code_wrapper or "", path_id),
+            (order_path, order_change_path, java_code_wrapper or "", path_id),
         )
         conn.commit()
         success = cursor.rowcount > 0
@@ -432,6 +444,8 @@ class Database:
         put_in_856_by_default: bool,
         rsx_810_path: str,
         put_in_810_by_default: bool,
+        extra_record_defining_rsx_tag: Optional[str] = None,
+        extra_record_defining_qual: Optional[str] = None,
     ) -> int:
         """Create a new item property"""
         conn = self.get_connection()
@@ -458,8 +472,9 @@ class Database:
             (edi_segment, edi_element_number, edi_qualifier, TLI_value,
              "850_RSX_tag", "850_TLI_tag", sourcing_group_properties_id,
              is_on_detail_level, is_partnumber, "855_RSX_path", put_in_855_by_default,
-             "856_RSX_path", put_in_856_by_default, "810_RSX_path", put_in_810_by_default)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             "856_RSX_path", put_in_856_by_default, "810_RSX_path", put_in_810_by_default,
+             extra_record_defining_rsx_tag, extra_record_defining_qual)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 edi_segment,
@@ -477,6 +492,8 @@ class Database:
                 1 if put_in_856_by_default else 0,
                 rsx_810_path,
                 1 if put_in_810_by_default else 0,
+                extra_record_defining_rsx_tag,
+                extra_record_defining_qual,
             ),
         )
         conn.commit()
@@ -529,6 +546,8 @@ class Database:
         put_in_856_by_default: bool,
         rsx_810_path: str,
         put_in_810_by_default: bool,
+        extra_record_defining_rsx_tag: Optional[str] = None,
+        extra_record_defining_qual: Optional[str] = None,
     ) -> bool:
         """Update item property"""
         conn = self.get_connection()
@@ -558,7 +577,8 @@ class Database:
                 TLI_value = ?, "850_RSX_tag" = ?, "850_TLI_tag" = ?,
                 sourcing_group_properties_id = ?, is_on_detail_level = ?,
                 is_partnumber = ?, "855_RSX_path" = ?, put_in_855_by_default = ?,
-                "856_RSX_path" = ?, put_in_856_by_default = ?, "810_RSX_path" = ?, put_in_810_by_default = ?
+                "856_RSX_path" = ?, put_in_856_by_default = ?, "810_RSX_path" = ?, put_in_810_by_default = ?,
+                extra_record_defining_rsx_tag = ?, extra_record_defining_qual = ?
             WHERE item_properties_id = ?
             """,
             (
@@ -577,6 +597,8 @@ class Database:
                 1 if put_in_856_by_default else 0,
                 rsx_810_path,
                 1 if put_in_810_by_default else 0,
+                extra_record_defining_rsx_tag,
+                extra_record_defining_qual,
                 item_id,
             ),
         )
