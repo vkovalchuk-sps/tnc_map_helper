@@ -99,12 +99,6 @@ class ItemsInfoDialog(QDialog):
             "put_in_856_by_default": t.get("desc_put_in_856_by_default", "put_in_856_by_default"),
             "810_RSX_path": t.get("desc_810_RSX_path", "810_RSX_path"),
             "put_in_810_by_default": t.get("desc_put_in_810_by_default", "put_in_810_by_default"),
-            "populate_method_name": t.get("desc_populate_method_name", "populate_method_name"),
-            "map_name": t.get("desc_map_name", "map_name"),
-            "call_method_java_code": t.get("desc_call_method_java_code", "call_method_java_code"),
-            "order_path": t.get("desc_order_path", "order_path"),
-            "order_change_path": t.get("desc_order_change_path", "order_change_path"),
-            "java_code_wrapper": t.get("desc_java_code_wrapper", "java_code_wrapper"),
         }
 
         for idx, item in enumerate(self.items, start=1):
@@ -272,20 +266,6 @@ class ItemsInfoDialog(QDialog):
                 add_simple_row("810_RSX_path", item.rsx_path_810)
             add_simple_row("put_in_810_by_default", "Yes" if getattr(item, "put_in_810", False) else "No")
 
-            # 7) Sourcing group and order path fields
-            if item.populate_method_name:
-                add_simple_row("populate_method_name", item.populate_method_name)
-            if item.map_name:
-                add_simple_row("map_name", item.map_name)
-            if item.call_method_java_code:
-                add_button_row("call_method_java_code", item.call_method_java_code)
-            if getattr(item, "order_path", ""):
-                add_simple_row("order_path", item.order_path)
-            if getattr(item, "order_change_path", ""):
-                add_simple_row("order_change_path", item.order_change_path)
-            if getattr(item, "java_code_wrapper", ""):
-                add_button_row("java_code_wrapper", item.java_code_wrapper)
-
             # Ensure the whole table is visible (no inner scrolling)
             table.setWordWrap(True)
             table.resizeRowsToContents()
@@ -303,6 +283,17 @@ class ItemsInfoDialog(QDialog):
             table.setMaximumHeight(total_height)
 
             expanded_layout.addWidget(table)
+
+            # 7) Sourcing group and order path fields are shown in a separate dialog
+            # Button is placed under the table as requested
+            if getattr(item, "sourcing_group", None) is not None:
+                group_btn = QPushButton(self.t.get("show_sourcing_group_info", "Show Sourcing Group Info"))
+                group_btn.setFixedHeight(24)
+                group_btn.clicked.connect(
+                    lambda checked, it=item: self._show_sourcing_group_info(it)
+                )
+                expanded_layout.addSpacing(6)
+                expanded_layout.addWidget(group_btn, alignment=Qt.AlignmentFlag.AlignLeft)
             item_layout.addWidget(expanded_widget)
 
             # Toggle visibility
@@ -336,6 +327,123 @@ class ItemsInfoDialog(QDialog):
         text_edit.setPlainText(content)
         text_edit.setReadOnly(True)
         layout.addWidget(text_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=dialog)
+        buttons.rejected.connect(dialog.reject)  # type: ignore[arg-type]
+        layout.addWidget(buttons)
+
+        dialog.exec()
+
+    def _show_sourcing_group_info(self, item: Item) -> None:
+        """Show sourcing group and SourceFromTLIPath information in a separate dialog."""
+        sg = getattr(item, "sourcing_group", None)
+        if sg is None:
+            # Nothing to show
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self.t.get("sourcing_group_info_title", "Sourcing Group Information"))
+        dialog.setMinimumSize(800, 500)
+
+        layout = QVBoxLayout(dialog)
+
+        table = QTableWidget()
+        table.setColumnCount(2)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.horizontalHeader().setVisible(False)
+        table.verticalHeader().setVisible(False)
+        table.setShowGrid(True)
+        table.setAlternatingRowColors(True)
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+
+        t = self.t
+        current_row = 0
+
+        def add_simple_row(desc_key: str, value_text: str) -> None:
+            nonlocal current_row
+            if value_text is None:
+                value_text_local = ""
+            else:
+                value_text_local = str(value_text)
+            table.insertRow(current_row)
+            desc = t.get(desc_key, desc_key)
+            desc_item = QTableWidgetItem(desc)
+            desc_item.setFlags(desc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(current_row, 0, desc_item)
+            value_item = QTableWidgetItem(value_text_local)
+            value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(current_row, 1, value_item)
+            current_row += 1
+
+        def add_button_row(desc_key: str, content: str) -> None:
+            nonlocal current_row
+            if not content:
+                return
+            table.insertRow(current_row)
+            desc = t.get(desc_key, desc_key)
+            desc_item = QTableWidgetItem(desc)
+            desc_item.setFlags(desc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(current_row, 0, desc_item)
+            button = QPushButton(self.t.get("show_content", "Show Content"))
+            button.setFixedWidth(160)
+            button.setFixedHeight(24)
+            button.clicked.connect(
+                lambda checked, text=content, title=desc: self._show_text_content(text, title)
+            )
+            table.setCellWidget(current_row, 1, button)
+            current_row += 1
+
+        # SourcingGroup fields
+        if getattr(sg, "sourcing_group_properties_id", None) is not None:
+            add_simple_row("desc_sourcing_group_properties_id", sg.sourcing_group_properties_id)
+        if getattr(sg, "populate_method_name", ""):
+            add_simple_row("desc_populate_method_name", sg.populate_method_name)
+        if getattr(sg, "map_name", ""):
+            add_simple_row("desc_map_name", sg.map_name)
+        if getattr(sg, "call_method_java_code", ""):
+            add_button_row("desc_call_method_java_code", sg.call_method_java_code)
+
+        # Order path ID (SourceFromTLIPath ID) - show only once
+        path = getattr(sg, "source_from_tli_path", None)
+        order_path_id = None
+        if path is not None and getattr(path, "order_path_properties_id", None) is not None:
+            order_path_id = path.order_path_properties_id
+        elif getattr(sg, "order_path_properties_id", None) is not None:
+            order_path_id = sg.order_path_properties_id
+        if order_path_id is not None:
+            add_simple_row("desc_order_path_properties_id", order_path_id)
+
+        # SourceFromTLIPath fields (if present)
+        if path is not None:
+            if getattr(path, "order_path", ""):
+                add_simple_row("desc_order_path", path.order_path)
+            if getattr(path, "xtl_part_to_replace_850", ""):
+                add_button_row("desc_xtl_part_to_replace_850", path.xtl_part_to_replace_850)
+            if getattr(path, "xtl_part_to_paste_850", ""):
+                add_button_row("desc_xtl_part_to_paste_850", path.xtl_part_to_paste_850)
+            if getattr(path, "xtl_part_to_replace_860", ""):
+                add_button_row("desc_xtl_part_to_replace_860", path.xtl_part_to_replace_860)
+            if getattr(path, "xtl_part_to_paste_860", ""):
+                add_button_row("desc_xtl_part_to_paste_860", path.xtl_part_to_paste_860)
+
+        table.setWordWrap(True)
+        table.resizeRowsToContents()
+        base_height = table.fontMetrics().height() + 8
+        for r in range(table.rowCount()):
+            if table.rowHeight(r) < base_height:
+                table.setRowHeight(r, base_height)
+
+        header_height = table.horizontalHeader().height() if table.horizontalHeader().isVisible() else 0
+        total_height = header_height + 2 * table.frameWidth()
+        for r in range(table.rowCount()):
+            total_height += table.rowHeight(r)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        table.setMinimumHeight(total_height)
+        table.setMaximumHeight(total_height)
+
+        layout.addWidget(table)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=dialog)
         buttons.rejected.connect(dialog.reject)  # type: ignore[arg-type]

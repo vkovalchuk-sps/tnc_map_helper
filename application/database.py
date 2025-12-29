@@ -40,21 +40,63 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
 
-        # Create order_path_properties table first (referenced by sourcing_group_properties)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS order_path_properties (
-                order_path_properties_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                order_path TEXT NOT NULL,
-                order_change_path TEXT NOT NULL,
-                java_code_wrapper TEXT
-            )
-        """)
+        # Create or migrate order_path_properties table first (referenced by sourcing_group_properties)
+        cursor.execute("PRAGMA table_info(order_path_properties)")
+        existing_columns = [row[1] for row in cursor.fetchall()]
 
-        # Ensure order_change_path column exists for older databases
-        if not self._table_has_column(cursor, "order_path_properties", "order_change_path"):
+        if not existing_columns:
+            # Fresh database – create table with new schema
             cursor.execute(
-                "ALTER TABLE order_path_properties ADD COLUMN order_change_path TEXT NOT NULL DEFAULT ''"
+                """
+                CREATE TABLE IF NOT EXISTS order_path_properties (
+                    order_path_properties_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_path TEXT NOT NULL,
+                    xtl_part_to_replace_850 TEXT NOT NULL,
+                    xtl_part_to_paste_850 TEXT NOT NULL,
+                    xtl_part_to_replace_860 TEXT NOT NULL,
+                    xtl_part_to_paste_860 TEXT NOT NULL
+                )
+                """
             )
+        elif "xtl_part_to_replace_850" not in existing_columns:
+            # Old schema detected – migrate to new columns, drop order_change_path/java_code_wrapper
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS order_path_properties_new (
+                    order_path_properties_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_path TEXT NOT NULL,
+                    xtl_part_to_replace_850 TEXT NOT NULL,
+                    xtl_part_to_paste_850 TEXT NOT NULL,
+                    xtl_part_to_replace_860 TEXT NOT NULL,
+                    xtl_part_to_paste_860 TEXT NOT NULL
+                )
+                """
+            )
+
+            # Preserve existing IDs and order_path; initialize new columns as empty strings
+            cursor.execute(
+                """
+                INSERT INTO order_path_properties_new (
+                    order_path_properties_id,
+                    order_path,
+                    xtl_part_to_replace_850,
+                    xtl_part_to_paste_850,
+                    xtl_part_to_replace_860,
+                    xtl_part_to_paste_860
+                )
+                SELECT
+                    order_path_properties_id,
+                    order_path,
+                    '',
+                    '',
+                    '',
+                    ''
+                FROM order_path_properties
+                """
+            )
+
+            cursor.execute("DROP TABLE order_path_properties")
+            cursor.execute("ALTER TABLE order_path_properties_new RENAME TO order_path_properties")
 
         # Create sourcing_group_properties table
         cursor.execute("""
@@ -166,17 +208,34 @@ class Database:
 
     # Order Path Properties CRUD operations
     def create_order_path(
-        self, order_path: str, order_change_path: str, java_code_wrapper: Optional[str] = None
+        self,
+        order_path: str,
+        xtl_part_to_replace_850: str,
+        xtl_part_to_paste_850: str,
+        xtl_part_to_replace_860: str,
+        xtl_part_to_paste_860: str,
     ) -> int:
         """Create a new order path property"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO order_path_properties (order_path, order_change_path, java_code_wrapper)
-            VALUES (?, ?, ?)
+            INSERT INTO order_path_properties (
+                order_path,
+                xtl_part_to_replace_850,
+                xtl_part_to_paste_850,
+                xtl_part_to_replace_860,
+                xtl_part_to_paste_860
+            )
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (order_path, order_change_path, java_code_wrapper or ""),
+            (
+                order_path,
+                xtl_part_to_replace_850,
+                xtl_part_to_paste_850,
+                xtl_part_to_replace_860,
+                xtl_part_to_paste_860,
+            ),
         )
         conn.commit()
         path_id = cursor.lastrowid
@@ -217,8 +276,10 @@ class Database:
         self,
         path_id: int,
         order_path: str,
-        order_change_path: str,
-        java_code_wrapper: Optional[str] = None,
+        xtl_part_to_replace_850: str,
+        xtl_part_to_paste_850: str,
+        xtl_part_to_replace_860: str,
+        xtl_part_to_paste_860: str,
     ) -> bool:
         """Update order path property"""
         conn = self.get_connection()
@@ -226,10 +287,21 @@ class Database:
         cursor.execute(
             """
             UPDATE order_path_properties
-            SET order_path = ?, order_change_path = ?, java_code_wrapper = ?
+            SET order_path = ?,
+                xtl_part_to_replace_850 = ?,
+                xtl_part_to_paste_850 = ?,
+                xtl_part_to_replace_860 = ?,
+                xtl_part_to_paste_860 = ?
             WHERE order_path_properties_id = ?
             """,
-            (order_path, order_change_path, java_code_wrapper or "", path_id),
+            (
+                order_path,
+                xtl_part_to_replace_850,
+                xtl_part_to_paste_850,
+                xtl_part_to_replace_860,
+                xtl_part_to_paste_860,
+                path_id,
+            ),
         )
         conn.commit()
         success = cursor.rowcount > 0
@@ -311,7 +383,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT s.*, o.order_path, o.java_code_wrapper
+            SELECT s.*, o.order_path
             FROM sourcing_group_properties s
             LEFT JOIN order_path_properties o ON s.order_path_properties_id = o.order_path_properties_id
             ORDER BY s.sourcing_group_properties_id
@@ -332,7 +404,7 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT s.*, o.order_path, o.java_code_wrapper
+            SELECT s.*, o.order_path
             FROM sourcing_group_properties s
             LEFT JOIN order_path_properties o ON s.order_path_properties_id = o.order_path_properties_id
             WHERE s.sourcing_group_properties_id = ?

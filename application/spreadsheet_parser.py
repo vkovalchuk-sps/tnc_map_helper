@@ -11,6 +11,32 @@ from openpyxl import load_workbook
 from application.translations import TRANSLATIONS
 
 
+@dataclass(frozen=True)
+class SourceFromTLIPath:
+    """Represents a row from order_path_properties table."""
+
+    order_path_properties_id: Optional[int] = None
+    order_path: str = ""
+    order_change_path: str = ""  # legacy, no longer stored in DB
+    java_code_wrapper: str = ""  # legacy, no longer stored in DB
+    xtl_part_to_replace_850: str = ""
+    xtl_part_to_paste_850: str = ""
+    xtl_part_to_replace_860: str = ""
+    xtl_part_to_paste_860: str = ""
+
+
+@dataclass
+class SourcingGroup:
+    """Represents a row from sourcing_group_properties table, with a link to SourceFromTLIPath."""
+
+    sourcing_group_properties_id: Optional[int] = None
+    populate_method_name: str = ""
+    map_name: str = ""
+    order_path_properties_id: Optional[int] = None
+    call_method_java_code: str = ""
+    source_from_tli_path: Optional[SourceFromTLIPath] = None
+
+
 @dataclass
 class Item:
     """Item class representing parsed spreadsheet data"""
@@ -45,19 +71,10 @@ class Item:
     put_in_855: bool = False
     put_in_856: bool = False
     put_in_810: bool = False
-    
-    # Sourcing group properties from DB
-    sourcing_group_properties_id: Optional[int] = None
-    populate_method_name: str = ""
-    map_name: str = ""
-    call_method_path: str = ""
-    call_method_java_code: str = ""
-    
-    # Order path properties from DB
+
+    # References to sourcing group and order path
     order_path_properties_id: Optional[int] = None
-    order_path: str = ""
-    order_change_path: str = ""
-    java_code_wrapper: str = ""
+    sourcing_group: Optional[SourcingGroup] = None
     
     # Parsing errors
     parsing_errors: List[str] = field(default_factory=list)
@@ -579,27 +596,38 @@ class SpreadsheetParser:
             item.put_in_855 = bool(match.get("put_in_855_by_default", False))
             item.put_in_856 = bool(match.get("put_in_856_by_default", False))
             item.put_in_810 = bool(match.get("put_in_810_by_default", False))
-            
-            # Get sourcing group info
+
+            # Get sourcing group and order path info
             sourcing_group_id = match.get("sourcing_group_properties_id")
             if sourcing_group_id:
-                item.sourcing_group_properties_id = sourcing_group_id
-                sourcing_group = self.database.get_sourcing_group(sourcing_group_id)
-                if sourcing_group:
-                    item.populate_method_name = sourcing_group.get("populate_method_name", "")
-                    item.map_name = sourcing_group.get("map_name", "")
-                    item.call_method_path = sourcing_group.get("order_path", sourcing_group.get("call_method_path", ""))
-                    item.call_method_java_code = sourcing_group.get("call_method_java_code", "")
-                    
-                    # Get order path info
-                    order_path_id = sourcing_group.get("order_path_properties_id")
+                sg_row = self.database.get_sourcing_group(sourcing_group_id)
+                if sg_row:
+                    order_path_id = sg_row.get("order_path_properties_id")
+                    source_path_obj: Optional[SourceFromTLIPath] = None
+
                     if order_path_id:
                         item.order_path_properties_id = order_path_id
-                        order_path = self.database.get_order_path(order_path_id)
-                        if order_path:
-                            item.order_path = order_path.get("order_path", "")
-                            item.order_change_path = order_path.get("order_change_path", "")
-                            item.java_code_wrapper = order_path.get("java_code_wrapper", "")
+                        op_row = self.database.get_order_path(order_path_id)
+                        if op_row:
+                            source_path_obj = SourceFromTLIPath(
+                                order_path_properties_id=op_row.get("order_path_properties_id"),
+                                order_path=op_row.get("order_path", ""),
+                                order_change_path=op_row.get("order_change_path", ""),  # legacy
+                                java_code_wrapper=op_row.get("java_code_wrapper", ""),  # legacy
+                                xtl_part_to_replace_850=op_row.get("xtl_part_to_replace_850", ""),
+                                xtl_part_to_paste_850=op_row.get("xtl_part_to_paste_850", ""),
+                                xtl_part_to_replace_860=op_row.get("xtl_part_to_replace_860", ""),
+                                xtl_part_to_paste_860=op_row.get("xtl_part_to_paste_860", ""),
+                            )
+
+                    item.sourcing_group = SourcingGroup(
+                        sourcing_group_properties_id=sg_row.get("sourcing_group_properties_id"),
+                        populate_method_name=sg_row.get("populate_method_name", ""),
+                        map_name=sg_row.get("map_name", ""),
+                        order_path_properties_id=sg_row.get("order_path_properties_id"),
+                        call_method_java_code=sg_row.get("call_method_java_code", ""),
+                        source_from_tli_path=source_path_obj,
+                    )
         
         return errors
 

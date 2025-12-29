@@ -1,11 +1,12 @@
 """Main window module for the application"""
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import copy
 import csv
 import io
+import re
 import xml.etree.ElementTree as ET
 
 from PyQt6.QtCore import Qt
@@ -43,9 +44,18 @@ from application.database_editor import ItemPropertiesEditor
 from application.items_dialog import ItemsInfoDialog
 from application.file_handlers import InputFileFinder, OutputFileWriter, XTLParser
 from application.scenarios_dialog import ScenariosInfoDialog
-from application.spreadsheet_parser import Item, SpreadsheetParser
+from application.spreadsheet_parser import Item, SourcingGroup, SpreadsheetParser
 from application.tommm_parser import InboundDocScenario, TOMMMParser
 from application.translations import TRANSLATIONS
+from application.code_generators import (
+    get_tli_fields_code,
+    get_850_omm_method_code,
+    get_860_omm_method_code,
+    get_populate_methods_code,
+    get_populate_maps_code,
+    get_call_populate_methods_code,
+    get_source_from_tli_structure_dictionary,
+)
 
 
 class MainWindow(QMainWindow):
@@ -480,7 +490,7 @@ class MainWindow(QMainWindow):
         csv_archive_group.setLayout(csv_archive_layout)
         layout.addWidget(csv_archive_group)
         
-        # Buttons to show parsed data (always visible, styled, left-aligned)
+        # Buttons to show parsed data (always visible, styled)
         t = TRANSLATIONS[self.current_language]
 
         buttons_layout = QHBoxLayout()
@@ -492,7 +502,7 @@ class MainWindow(QMainWindow):
         self.show_items_button.setFixedWidth(320)
         self.show_items_button.setStyleSheet(
             "QPushButton {"
-            "  text-align: left;"
+            "  text-align: center;"
             "  font-weight: bold;"
             "  background-color: #e0e0e0;"
             "}"
@@ -508,7 +518,7 @@ class MainWindow(QMainWindow):
         self.show_scenarios_button.setFixedWidth(320)
         self.show_scenarios_button.setStyleSheet(
             "QPushButton {"
-            "  text-align: left;"
+            "  text-align: center;"
             "  font-weight: bold;"
             "  background-color: #e0e0e0;"
             "}"
@@ -1006,60 +1016,384 @@ class MainWindow(QMainWindow):
                 f"{t['delete_files_warning']}:\n{error}",
             )
 
-        # Write output file
-        error = OutputFileWriter.write_output_file(output_dir, company_name, java_package, author, self.parsed_scenarios)
-        if error:
-            QMessageBox.critical(
+        # Generate CSV test files if checkbox is enabled
+        if self.artifact_settings.get("gen_csv_inbound", False):
+            self._generate_csv_test_files(output_dir)
+
+        # Generate unified RSX 855 test file if checkbox is enabled
+        if self.artifact_settings.get("gen_rsx_855", False):
+            try:
+                self._generate_rsx_855_test_file(output_dir)
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    t["error"],
+                    f"Error generating 855 RSX test file:\n{str(e)}",
+                )
+
+        # Generate unified RSX 856 test files if checkbox is enabled
+        if self.artifact_settings.get("gen_rsx_856", False):
+            try:
+                self._generate_rsx_856_test_file(output_dir)
+                self._generate_rsx_856_consolidated_test_file(output_dir)
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    t["error"],
+                    f"Error generating 856 RSX test files:\n{str(e)}",
+                )
+
+        # Generate unified RSX 810 test file if checkbox is enabled
+        if self.artifact_settings.get("gen_rsx_810", False):
+            try:
+                self._generate_rsx_810_test_file(output_dir)
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    t["error"],
+                    f"Error generating 810 RSX test file:\n{str(e)}",
+                )
+
+        # Generate poRsxRead.xtl / pcRsxRead.xtl if corresponding checkboxes are enabled
+        try:
+            self._generate_xtl_files(output_dir, company_name, java_package, author)
+        except Exception as e:
+            QMessageBox.warning(
                 self,
                 t["error"],
-                f"{t['save_error']}:\n{error}",
+                f"Error generating XTL files:\n{str(e)}",
             )
-        else:
-            output_file = output_dir / "output.txt"
-            
-            # Generate CSV test files if checkbox is enabled
-            if self.artifact_settings.get("gen_csv_inbound", False):
-                self._generate_csv_test_files(output_dir)
 
-            # Generate unified RSX 855 test file if checkbox is enabled
-            if self.artifact_settings.get("gen_rsx_855", False):
-                try:
-                    self._generate_rsx_855_test_file(output_dir)
-                except Exception as e:
-                    QMessageBox.warning(
-                        self,
-                        t["error"],
-                        f"Error generating 855 RSX test file:\n{str(e)}",
+        # Final success message with output folder path
+        QMessageBox.information(
+            self,
+            t["success"],
+            f"{t['artifacts_generated_saved_to_folder']}\n{output_dir}",
+        )
+
+    def _generate_xtl_files(self, output_dir: Path, company_name: str, java_package: str, author: str) -> None:
+        """Generate poRsxRead.xtl and pcRsxRead.xtl into the output folder.
+
+        For now this copies the base templates and updates DOCUMENTDEF
+        attributes (owner, javaPackageName, fullyQualifiedJavaName,
+        lastModifiedBy) using values from the UI. More advanced template
+        modifications (TLI fields, OMM, populate methods) can be layered
+        on top later.
+        """
+
+        gen_850 = bool(self.artifact_settings.get("gen_xtl_850", False))
+        gen_860 = bool(self.artifact_settings.get("gen_xtl_860", False))
+
+        # Per-document XTL settings (TLI fields, etc.)
+        xtl_850_settings = self.artifact_settings.get("xtl_850_settings", {})
+        xtl_860_settings = self.artifact_settings.get("xtl_860_settings", {})
+
+        gen_tli_850 = bool(xtl_850_settings.get("gen_tli_fields", True))
+        gen_tli_860 = bool(xtl_860_settings.get("gen_tli_fields", True))
+
+        gen_omm_850 = bool(xtl_850_settings.get("gen_order_model", True))
+        gen_omm_860 = bool(xtl_860_settings.get("gen_order_model", True))
+
+        gen_populate_850 = bool(xtl_850_settings.get("gen_populate_methods", True))
+        gen_populate_860 = bool(xtl_860_settings.get("gen_populate_methods", True))
+
+        # Generate code calling sourceFromTLI methods (uses XTL fragments)
+        gen_source_from_tli_calls_850 = bool(xtl_850_settings.get("gen_populate_calls", True))
+        gen_source_from_tli_calls_860 = bool(xtl_860_settings.get("gen_populate_calls", True))
+
+        if not gen_850 and not gen_860:
+            return
+
+        templates_dir = self.base_path / "application" / "templates"
+
+        if gen_850:
+            template_850 = templates_dir / "poRsxRead.xtl"
+            if template_850.exists():
+                self._generate_single_xtl(
+                    template_path=template_850,
+                    output_path=output_dir / "poRsxRead.xtl",
+                    company_name=company_name,
+                    java_package=java_package,
+                    author=author,
+                    java_name="poRsxRead",
+                    gen_tli_fields=gen_tli_850,
+                    gen_order_model=gen_omm_850,
+                    gen_populate_methods=gen_populate_850,
+                    gen_source_from_tli_calls=gen_source_from_tli_calls_850,
+                    is_850=True,
+                )
+
+        if gen_860:
+            template_860 = templates_dir / "pcRsxRead.xtl"
+            if template_860.exists():
+                self._generate_single_xtl(
+                    template_path=template_860,
+                    output_path=output_dir / "pcRsxRead.xtl",
+                    company_name=company_name,
+                    java_package=java_package,
+                    author=author,
+                    java_name="pcRsxRead",
+                    gen_tli_fields=gen_tli_860,
+                    gen_order_model=gen_omm_860,
+                    gen_populate_methods=gen_populate_860,
+                    gen_source_from_tli_calls=gen_source_from_tli_calls_860,
+                    is_850=False,
+                )
+
+    def _generate_single_xtl(
+        self,
+        template_path: Path,
+        output_path: Path,
+        company_name: str,
+        java_package: str,
+        author: str,
+        java_name: str,
+        gen_tli_fields: bool,
+        gen_order_model: bool,
+        gen_populate_methods: bool,
+        gen_source_from_tli_calls: bool,
+        is_850: bool,
+    ) -> None:
+        """Copy a single .xtl template and adjust DOCUMENTDEF attributes.
+
+        Important: works on raw text to avoid any loss of embedded
+        Java/Xtencil code or comments from the original template.
+        """
+
+        text = template_path.read_text(encoding="utf-8")
+
+        # Find the opening DOCUMENTDEF tag (single line in our templates)
+        match = re.search(r"<DOCUMENTDEF[^>]*>", text, flags=re.DOTALL)
+        if not match:
+            # If for some reason there's no DOCUMENTDEF, just copy file
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(text, encoding="utf-8")
+            return
+
+        original_tag = match.group(0)
+        new_tag = original_tag
+
+        # Helper to replace or inject an attribute value inside the tag
+        def _set_attr(tag: str, name: str, value: str) -> str:
+            if not value:
+                return tag
+
+            # Pattern: capture prefix name=" and closing quote separately
+            pattern = rf"(\b{name}=\")[^\"]*(\")"
+
+            if re.search(pattern, tag):
+                # Use a function so we can safely insert raw value
+                def repl(m: re.Match) -> str:
+                    return f"{m.group(1)}{value}{m.group(2)}"
+
+                return re.sub(pattern, repl, tag, count=1)
+
+            # If attribute is missing, insert it before the closing '>'
+            return re.sub(r">$", f" {name}=\"{value}\">", tag, count=1)
+
+        # Apply required attributes
+        new_tag = _set_attr(new_tag, "owner", company_name)
+        if java_package:
+            new_tag = _set_attr(new_tag, "javaPackageName", java_package)
+            new_tag = _set_attr(new_tag, "fullyQualifiedJavaName", f"{java_package}.{java_name}")
+        new_tag = _set_attr(new_tag, "lastModifiedBy", author)
+
+        # Replace only the first occurrence of DOCUMENTDEF tag
+        new_text = text[: match.start()] + new_tag + text[match.end() :]
+
+        # Optionally regenerate TLI FIELDDEF block inside testLineItemRep group
+        if gen_tli_fields and self.parsed_items:
+            try:
+                tli_code = get_tli_fields_code(self.parsed_items)
+            except Exception:
+                tli_code = ""
+
+            if tli_code.strip():
+                # Зберігаємо перший FIELDDEF з javaName="recordType" як є,
+                # а весь інший вміст групи TestLineItemRep підміняємо
+                # згенерованими TLI-полями.
+                pattern = (
+                    r"(<GROUPDEF[^>]*javaName=\"testLineItemRep\"[^>]*>\s*\n"  # відкриваючий GROUPDEF
+                    r"(?:\s*<FIELDDEF[^>]*javaName=\"recordType\"[^>]*/>\s*\n)"  # перший FIELDDEF recordType
+                    r")"
+                    r"(.*?)"  # решта FIELDDEF-ів усередині групи
+                    r"(\n\s*</GROUPDEF>)"  # закриваючий GROUPDEF
+                )
+
+                def _tli_repl(m: re.Match) -> str:
+                    return f"{m.group(1)}{tli_code}{m.group(3)}"
+
+                new_text = re.sub(pattern, _tli_repl, new_text, count=1, flags=re.DOTALL)
+
+        # Optionally regenerate getOrderManagementModel() method body
+        if gen_order_model and self.parsed_scenarios:
+            try:
+                if is_850:
+                    omm_code = get_850_omm_method_code(self.parsed_scenarios)
+                else:
+                    omm_code = get_860_omm_method_code(self.parsed_scenarios)
+            except Exception:
+                omm_code = ""
+
+            if omm_code.strip():
+                # Замінюємо існуюче оголошення методу private String getOrderManagementModel()
+                # від слова 'private' до першої закриваючої дужки на згенерований блок.
+                pattern_omm = (
+                    r"private\s+String\s+getOrderManagementModel\s*\(\s*\)\s*\{[\s\S]*?\n\}\s*"
+                )
+
+                # Додаємо ще один порожній рядок після методу
+                new_text = re.sub(pattern_omm, omm_code + "\n\n", new_text, count=1)
+
+        # Optionally regenerate populate methods block in ENVIRONMENT
+        if gen_populate_methods and self.parsed_items:
+            try:
+                populate_code = get_populate_methods_code(self.parsed_items)
+                maps_code = get_populate_maps_code(self.parsed_items)
+                calls_code = get_call_populate_methods_code(self.parsed_items)
+            except Exception:
+                populate_code = ""
+                maps_code = ""
+                calls_code = ""
+
+            # 1) Замінюємо декларації Map<String,String> після службового коментаря
+            if maps_code.strip():
+                pattern_maps = (
+                    r"(<\?java\s+// Hashmaps that store relationships between TLI fields and target fields[^\n]*\n)"  # рядок з коментарем
+                    r"((?:Map<String,String>.*\n)+)"  # усі поточні декларації Map
+                )
+
+                def _maps_repl(m: re.Match) -> str:
+                    return f"{m.group(1)}{maps_code}\n"
+
+                new_text = re.sub(pattern_maps, _maps_repl, new_text, count=1)
+
+            # 2) Замінюємо populate-методи між OMM та sourceFromTLI
+            if populate_code.strip():
+                # В оригінальному шаблоні populate-методи йдуть одразу
+                # після getOrderManagementModel() і перед sourceFromTLI.
+                # Замінюємо цей середній блок на згенерований код.
+                pattern_pop = (
+                    r"(private\s+String\s+getOrderManagementModel[\s\S]*?\n\}\s*\n\s*\n)"  # метод OMM + порожній рядок
+                    r"([\s\S]*?)"  # старі populate-методи
+                    r"(\n\s*// Source a value from the TLI record to a target record)"  # коментар перед sourceFromTLI
+                )
+
+                def _pop_repl(m: re.Match) -> str:
+                    return f"{m.group(1)}{populate_code}{m.group(3)}"
+
+                new_text = re.sub(pattern_pop, _pop_repl, new_text, count=1)
+
+            # 3) Замінюємо виклики populate-методів у PREVALIDATION.documentFinalize
+            if calls_code.strip():
+                pattern_calls = (
+                    r"(public\s+void\s+documentFinalize\s*\(ValidationEvent\s+e\)\s*\{\s*\n"  # сигнатура
+                    r"\s*//\s*Populate HashMaps that are used for copying values from TLI[^\n]*\n"  # коментар
+                    r")"
+                    r"([\s\S]*?)"  # старі виклики populate*
+                    r"(\n\}\s*//end-method)"  # закриття методу
+                )
+
+                def _calls_repl(m: re.Match) -> str:
+                    return f"{m.group(1)}{calls_code}{m.group(3)}"
+
+                new_text = re.sub(pattern_calls, _calls_repl, new_text, count=1)
+
+        # Optionally regenerate code calling sourceFromTLI methods using XTL fragments
+        if gen_source_from_tli_calls and self.parsed_items:
+            try:
+                path_structure = get_source_from_tli_structure_dictionary(self.parsed_items)
+            except Exception:
+                path_structure = {}
+
+            try:
+                all_order_paths = self.database.get_all_order_paths()
+            except Exception:
+                all_order_paths = []
+
+            # Map order_path_properties_id -> list of SourcingGroup for paths that are actually used by Items
+            paths_with_groups: Dict[int, List[SourcingGroup]] = {}
+            for path_obj, sg_list in path_structure.items():
+                path_id = getattr(path_obj, "order_path_properties_id", None)
+                if path_id is None:
+                    continue
+
+                existing = paths_with_groups.setdefault(path_id, [])
+
+                # Ensure uniqueness per path_id using the same key as in _group_items_by_sourcing_group
+                seen_keys = {
+                    (sg.sourcing_group_properties_id, sg.populate_method_name, sg.map_name)
+                    for sg in existing
+                }
+                for sg in sg_list:
+                    key = (
+                        sg.sourcing_group_properties_id,
+                        sg.populate_method_name,
+                        sg.map_name,
+                    )
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        existing.append(sg)
+
+            # Iterate over all SourceFromTLIPath rows from DB
+            for row in all_order_paths:
+                path_id = row.get("order_path_properties_id")
+                if path_id is None:
+                    continue
+
+                if is_850:
+                    replace_fragment = row.get("xtl_part_to_replace_850", "") or ""
+                    paste_template = row.get("xtl_part_to_paste_850", "") or ""
+                else:
+                    replace_fragment = row.get("xtl_part_to_replace_860", "") or ""
+                    paste_template = row.get("xtl_part_to_paste_860", "") or ""
+
+                # Nothing to replace for this path
+                if not replace_fragment:
+                    continue
+
+                sg_list = paths_with_groups.get(path_id, [])
+
+                # If there are SourcingGroups for this path, build {source_from_tli_code}
+                # from their call_method_java_code. Otherwise, handle the special case
+                # where the template is just a documentFinalize wrapper.
+                if sg_list:
+                    # Preserve all indentation (spaces/tabs) from stored Java code;
+                    # use a stripped copy only to filter out effectively empty entries.
+                    codes: List[str] = []
+                    for sg in sg_list:
+                        code_raw = getattr(sg, "call_method_java_code", "") or ""
+                        if code_raw.strip():
+                            codes.append(code_raw)
+
+                    source_from_tli_code = "\n\n".join(codes)
+                    final_block = paste_template.replace("{source_from_tli_code}", source_from_tli_code)
+                else:
+                    # No SourcingGroup for this SourceFromTLIPath.
+                    # If the template is exactly a simple documentFinalize wrapper
+                    # with a single {source_from_tli_code} line, then collapse it to
+                    # a method without that placeholder line.
+                    normalized_template = paste_template.replace("\r\n", "\n").strip()
+                    simple_wrapper = (
+                        "public void documentFinalize(ValidationEvent e) {\n"
+                        "{source_from_tli_code}\n"
+                        "}//end-method"
                     )
 
-            # Generate unified RSX 856 test files if checkbox is enabled
-            if self.artifact_settings.get("gen_rsx_856", False):
-                try:
-                    self._generate_rsx_856_test_file(output_dir)
-                    self._generate_rsx_856_consolidated_test_file(output_dir)
-                except Exception as e:
-                    QMessageBox.warning(
-                        self,
-                        t["error"],
-                        f"Error generating 856 RSX test files:\n{str(e)}",
-                    )
+                    if normalized_template == simple_wrapper:
+                        final_block = (
+                            "public void documentFinalize(ValidationEvent e) {\n"
+                            "}//end-method"
+                        )
+                    else:
+                        # Generic case: just remove the placeholder.
+                        final_block = paste_template.replace("{source_from_tli_code}", "")
 
-            # Generate unified RSX 810 test file if checkbox is enabled
-            if self.artifact_settings.get("gen_rsx_810", False):
-                try:
-                    self._generate_rsx_810_test_file(output_dir)
-                except Exception as e:
-                    QMessageBox.warning(
-                        self,
-                        t["error"],
-                        f"Error generating 810 RSX test file:\n{str(e)}",
-                    )
-            
-            QMessageBox.information(
-                self,
-                t["success"],
-                f"{t['data_saved']}:\n{output_file}",
-            )
+                # Replace the configured fragment in the XTL text
+                new_text = new_text.replace(replace_fragment, final_block)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(new_text, encoding="utf-8")
 
     def _generate_rsx_855_test_file(self, output_dir: Path) -> None:
         """Generate unified RSX 855 XML test file based on OrderAck.xml template."""
@@ -1129,7 +1463,7 @@ class MainWindow(QMainWindow):
         else:
             self._indent_xml(root)
 
-        rsx_output_dir = output_dir / "RSX max test files"
+        rsx_output_dir = output_dir / "RSX test files (outbound docs)"
         rsx_output_dir.mkdir(parents=True, exist_ok=True)
         output_file = rsx_output_dir / "855_RSX_test_file.xml"
 
@@ -1210,7 +1544,7 @@ class MainWindow(QMainWindow):
         else:
             self._indent_xml(root)
 
-        rsx_output_dir = output_dir / "RSX max test files"
+        rsx_output_dir = output_dir / "RSX test files (outbound docs)"
         rsx_output_dir.mkdir(parents=True, exist_ok=True)
         output_file = rsx_output_dir / "856_RSX_test_file.xml"
 
@@ -1292,7 +1626,7 @@ class MainWindow(QMainWindow):
         else:
             self._indent_xml(root)
 
-        rsx_output_dir = output_dir / "RSX max test files"
+        rsx_output_dir = output_dir / "RSX test files (outbound docs)"
         rsx_output_dir.mkdir(parents=True, exist_ok=True)
         output_file = rsx_output_dir / "810_RSX_test_file.xml"
 
@@ -1409,7 +1743,7 @@ class MainWindow(QMainWindow):
         else:
             self._indent_xml(root)
 
-        rsx_output_dir = output_dir / "RSX max test files"
+        rsx_output_dir = output_dir / "RSX test files (outbound docs)"
         rsx_output_dir.mkdir(parents=True, exist_ok=True)
         output_file = rsx_output_dir / "856_RSX_consolidated_test_file.xml"
 
@@ -2501,7 +2835,7 @@ class MainWindow(QMainWindow):
         
         try:
             # Create subdirectory for CSV files
-            csv_output_dir = output_dir / "CSV max test files (inbound docs)"
+            csv_output_dir = output_dir / "CSV test files (inbound docs)"
             csv_output_dir.mkdir(parents=True, exist_ok=True)
             
             # Generate file for each scenario with CSV test file

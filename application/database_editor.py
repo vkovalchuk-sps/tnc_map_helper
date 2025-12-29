@@ -209,12 +209,14 @@ class ItemPropertiesEditor(QDialog):
 
         # Table for order paths
         self.order_path_table = QTableWidget()
-        self.order_path_table.setColumnCount(4)
+        self.order_path_table.setColumnCount(6)
         self.order_path_table.setHorizontalHeaderLabels([
             "ID",
             self._t("order_path"),
-            self._t("order_change_path"),
-            self._t("java_code_wrapper"),
+            self._t("xtl_part_to_replace_850"),
+            self._t("xtl_part_to_paste_850"),
+            self._t("xtl_part_to_replace_860"),
+            self._t("xtl_part_to_paste_860"),
         ])
         self.order_path_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.order_path_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -281,17 +283,29 @@ class ItemPropertiesEditor(QDialog):
             item1.setToolTip(self._t("db_desc_order_path"))
             self.order_path_table.setItem(row, 1, item1)
 
-            order_change_path = path.get("order_change_path", "")
-            item2 = QTableWidgetItem(order_change_path)
-            item2.setToolTip(self._t("db_desc_order_change_path"))
+            # Helper to truncate long XTL snippets
+            def _truncate(value: str) -> str:
+                return value[:50] + "..." if len(value) > 50 else value
+
+            part_r_850 = path.get("xtl_part_to_replace_850", "") or ""
+            item2 = QTableWidgetItem(_truncate(part_r_850))
+            item2.setToolTip(self._t("db_desc_xtl_part_to_replace_850"))
             self.order_path_table.setItem(row, 2, item2)
 
-            java_wrapper = path.get("java_code_wrapper") or ""
-            # Truncate for display
-            display_wrapper = java_wrapper[:50] + "..." if len(java_wrapper) > 50 else java_wrapper
-            item3 = QTableWidgetItem(display_wrapper)
-            item3.setToolTip(self._t("db_desc_java_code_wrapper"))
+            part_p_850 = path.get("xtl_part_to_paste_850", "") or ""
+            item3 = QTableWidgetItem(_truncate(part_p_850))
+            item3.setToolTip(self._t("db_desc_xtl_part_to_paste_850"))
             self.order_path_table.setItem(row, 3, item3)
+
+            part_r_860 = path.get("xtl_part_to_replace_860", "") or ""
+            item4 = QTableWidgetItem(_truncate(part_r_860))
+            item4.setToolTip(self._t("db_desc_xtl_part_to_replace_860"))
+            self.order_path_table.setItem(row, 4, item4)
+
+            part_p_860 = path.get("xtl_part_to_paste_860", "") or ""
+            item5 = QTableWidgetItem(_truncate(part_p_860))
+            item5.setToolTip(self._t("db_desc_xtl_part_to_paste_860"))
+            self.order_path_table.setItem(row, 5, item5)
         self.order_path_table.resizeColumnsToContents()
 
         # Load items
@@ -679,9 +693,12 @@ class SourcingGroupDialog(QDialog):
         populate_method = self.populate_method_field.text().strip()
         map_name = self.map_name_field.text().strip()
         order_path_id = self.order_path_combo.currentData()
-        call_method_java_code = self.call_method_java_code_field.toPlainText().strip()
+        # Preserve all indentation and tab characters in Java code.
+        # Use a stripped copy only for validation that field is not empty.
+        call_method_java_code_raw = self.call_method_java_code_field.toPlainText()
+        call_method_java_code_stripped = call_method_java_code_raw.strip()
 
-        if not all([populate_method, map_name, call_method_java_code]):
+        if not all([populate_method, map_name, call_method_java_code_stripped]):
             QMessageBox.warning(self, self._t("error"), self._t("fill_all_fields"))
             return
 
@@ -695,11 +712,11 @@ class SourcingGroupDialog(QDialog):
                 populate_method,
                 map_name,
                 order_path_id,
-                call_method_java_code,
+                call_method_java_code_raw,
             )
         else:
             self.database.create_sourcing_group(
-                populate_method, map_name, order_path_id, call_method_java_code
+                populate_method, map_name, order_path_id, call_method_java_code_raw
             )
 
         self.accept()
@@ -1089,7 +1106,7 @@ class OrderPathDialog(QDialog):
         layout = QVBoxLayout()
         self.setLayout(layout)
 
-        # Use GridLayout for three aligned columns: Label | Help Button | Input Field
+        # Use GridLayout for aligned columns: Label | Help Button | Input Field
         grid = QGridLayout()
         grid.setColumnStretch(2, 1)  # Make input field column stretchable
 
@@ -1097,38 +1114,59 @@ class OrderPathDialog(QDialog):
         self.order_path_field.setToolTip(self._t("db_desc_order_path"))
         self.order_path_field.setMinimumWidth(400)
 
-        self.order_change_path_field = QLineEdit()
-        self.order_change_path_field.setToolTip(self._t("db_desc_order_change_path"))
-        self.order_change_path_field.setMinimumWidth(400)
-        
-        self.java_code_wrapper_field = QTextEdit()
-        self.java_code_wrapper_field.setToolTip(self._t("db_desc_java_code_wrapper"))
-        self.java_code_wrapper_field.setMinimumWidth(400)
-        self.java_code_wrapper_field.setMinimumHeight(150)  # 7 rows approximately
-        self.java_code_wrapper_field.setMaximumHeight(150)
+        self.xtl_part_to_replace_850_field = QTextEdit()
+        self.xtl_part_to_replace_850_field.setToolTip(self._t("db_desc_xtl_part_to_replace_850"))
+        self.xtl_part_to_replace_850_field.setMinimumWidth(400)
+        self.xtl_part_to_replace_850_field.setMinimumHeight(80)
+
+        self.xtl_part_to_paste_850_field = QTextEdit()
+        self.xtl_part_to_paste_850_field.setToolTip(self._t("db_desc_xtl_part_to_paste_850"))
+        self.xtl_part_to_paste_850_field.setMinimumWidth(400)
+        self.xtl_part_to_paste_850_field.setMinimumHeight(80)
+
+        self.xtl_part_to_replace_860_field = QTextEdit()
+        self.xtl_part_to_replace_860_field.setToolTip(self._t("db_desc_xtl_part_to_replace_860"))
+        self.xtl_part_to_replace_860_field.setMinimumWidth(400)
+        self.xtl_part_to_replace_860_field.setMinimumHeight(80)
+
+        self.xtl_part_to_paste_860_field = QTextEdit()
+        self.xtl_part_to_paste_860_field.setToolTip(self._t("db_desc_xtl_part_to_paste_860"))
+        self.xtl_part_to_paste_860_field.setMinimumWidth(400)
+        self.xtl_part_to_paste_860_field.setMinimumHeight(80)
 
         # Row 0: order_path
         grid.addWidget(QLabel(self._t("order_path") + ":"), 0, 0)
         grid.addWidget(self._create_help_button("db_desc_order_path"), 0, 1)
         grid.addWidget(self.order_path_field, 0, 2)
 
-        # Row 1: order_change_path
-        grid.addWidget(QLabel(self._t("order_change_path") + ":"), 1, 0)
-        grid.addWidget(self._create_help_button("db_desc_order_change_path"), 1, 1)
-        grid.addWidget(self.order_change_path_field, 1, 2)
+        # Row 1: xtl_part_to_replace_850
+        grid.addWidget(QLabel(self._t("xtl_part_to_replace_850") + ":"), 1, 0)
+        grid.addWidget(self._create_help_button("db_desc_xtl_part_to_replace_850"), 1, 1)
+        grid.addWidget(self.xtl_part_to_replace_850_field, 1, 2)
 
-        # Row 2: java_code_wrapper
-        grid.addWidget(QLabel(self._t("java_code_wrapper") + ":"), 2, 0)
-        grid.addWidget(self._create_help_button("db_desc_java_code_wrapper"), 2, 1)
-        grid.addWidget(self.java_code_wrapper_field, 2, 2)
+        # Row 2: xtl_part_to_paste_850
+        grid.addWidget(QLabel(self._t("xtl_part_to_paste_850") + ":"), 2, 0)
+        grid.addWidget(self._create_help_button("db_desc_xtl_part_to_paste_850"), 2, 1)
+        grid.addWidget(self.xtl_part_to_paste_850_field, 2, 2)
+
+        # Row 3: xtl_part_to_replace_860
+        grid.addWidget(QLabel(self._t("xtl_part_to_replace_860") + ":"), 3, 0)
+        grid.addWidget(self._create_help_button("db_desc_xtl_part_to_replace_860"), 3, 1)
+        grid.addWidget(self.xtl_part_to_replace_860_field, 3, 2)
+
+        # Row 4: xtl_part_to_paste_860
+        grid.addWidget(QLabel(self._t("xtl_part_to_paste_860") + ":"), 4, 0)
+        grid.addWidget(self._create_help_button("db_desc_xtl_part_to_paste_860"), 4, 1)
+        grid.addWidget(self.xtl_part_to_paste_860_field, 4, 2)
         
         layout.addLayout(grid)
 
         if self.path_data:
             self.order_path_field.setText(self.path_data["order_path"])
-            self.order_change_path_field.setText(self.path_data.get("order_change_path", ""))
-            java_wrapper = self.path_data.get("java_code_wrapper", "")
-            self.java_code_wrapper_field.setPlainText(java_wrapper)
+            self.xtl_part_to_replace_850_field.setPlainText(self.path_data.get("xtl_part_to_replace_850", ""))
+            self.xtl_part_to_paste_850_field.setPlainText(self.path_data.get("xtl_part_to_paste_850", ""))
+            self.xtl_part_to_replace_860_field.setPlainText(self.path_data.get("xtl_part_to_replace_860", ""))
+            self.xtl_part_to_paste_860_field.setPlainText(self.path_data.get("xtl_part_to_paste_860", ""))
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -1140,10 +1178,20 @@ class OrderPathDialog(QDialog):
     def accept_dialog(self) -> None:
         """Handle OK button click"""
         order_path = self.order_path_field.text().strip()
-        order_change_path = self.order_change_path_field.text().strip()
-        java_code_wrapper = self.java_code_wrapper_field.toPlainText().strip()
+        # Preserve all indentation and tab characters in XTL fragments.
+        # Use stripped copies only to validate that fields are not empty.
+        xtl_part_to_replace_850_raw = self.xtl_part_to_replace_850_field.toPlainText()
+        xtl_part_to_paste_850_raw = self.xtl_part_to_paste_850_field.toPlainText()
+        xtl_part_to_replace_860_raw = self.xtl_part_to_replace_860_field.toPlainText()
+        xtl_part_to_paste_860_raw = self.xtl_part_to_paste_860_field.toPlainText()
 
-        if not order_path or not order_change_path:
+        if (
+            not order_path
+            or not xtl_part_to_replace_850_raw.strip()
+            or not xtl_part_to_paste_850_raw.strip()
+            or not xtl_part_to_replace_860_raw.strip()
+            or not xtl_part_to_paste_860_raw.strip()
+        ):
             QMessageBox.warning(self, self._t("error"), self._t("fill_all_fields"))
             return
 
@@ -1151,14 +1199,18 @@ class OrderPathDialog(QDialog):
             self.database.update_order_path(
                 self.path_data["order_path_properties_id"],
                 order_path,
-                order_change_path,
-                java_code_wrapper if java_code_wrapper else None,
+                xtl_part_to_replace_850_raw,
+                xtl_part_to_paste_850_raw,
+                xtl_part_to_replace_860_raw,
+                xtl_part_to_paste_860_raw,
             )
         else:
             self.database.create_order_path(
                 order_path,
-                order_change_path,
-                java_code_wrapper if java_code_wrapper else None,
+                xtl_part_to_replace_850_raw,
+                xtl_part_to_paste_850_raw,
+                xtl_part_to_replace_860_raw,
+                xtl_part_to_paste_860_raw,
             )
 
         self.accept()

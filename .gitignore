@@ -7,3 +7,8 @@ output/*
 # Config folder (optional - you may want to keep this)
 # .config/
 
+# PyInstaller build artifacts
+TNCMapHelper.spec
+build/
+dist/
+
