@@ -4,8 +4,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from application.spreadsheet_parser import Item, SourcingGroup, SourceFromTLIPath
-from application.tommm_parser import InboundDocScenario
+from application.parsers.spreadsheet_parser import Item, SourcingGroup, SourceFromTLIPath
+from application.parsers.tommm_parser import InboundDocScenario
 
 
 # ---------------------------- TLI fields (FIELDDEF) ----------------------------

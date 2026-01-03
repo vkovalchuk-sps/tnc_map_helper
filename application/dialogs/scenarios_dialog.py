@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
 )
 
-from application.tommm_parser import InboundDocScenario
+from application.parsers.tommm_parser import InboundDocScenario
 from application.translations import TRANSLATIONS
 
 

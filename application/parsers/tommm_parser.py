@@ -101,6 +101,8 @@ class TOMMMParser:
             # Read file content
             if file_path.suffix.lower() == ".mhtml":
                 html_content = self._extract_html_from_mhtml(file_path)
+            elif file_path.suffix.lower() in [".html", ".htm"]:
+                html_content = self._extract_html_from_html(file_path)
             else:
                 html_content = file_path.read_text(encoding="utf-8")
             
@@ -123,21 +125,65 @@ class TOMMMParser:
             if not rows:
                 return scenarios, company_name, self.t.get("error_table_empty", "Scenario table is empty")
             
-            table_rows = rows.find_all("tr", {"data-testid": "tnc-scenario-table-row__row"})
+            # Get all tr elements
+            # For malformed HTML where rows are nested, we need to process all rows
+            # but extract data only from each row's direct children
+            all_table_rows = rows.find_all("tr", {"data-testid": "tnc-scenario-table-row__row"})
+            
+            # For properly structured HTML (like MHTML), all rows are direct children
+            # For malformed HTML (like some saved HTML files), rows may be nested
+            # We'll process all rows, but when extracting data, we'll only use direct children
+            table_rows = all_table_rows
             
             # First pass: collect all row data
             row_data = []
             for row in table_rows:
-                cells = row.find_all("td", {"role": "cell"})
-                if len(cells) < 3:
-                    continue
+                # Try to find cells by data-testid first (more reliable for malformed HTML)
+                name_cell_elem = row.find("td", {"data-testid": "tnc-scenario-name__cell"})
+                key_cell_elem = row.find("td", {"data-testid": "tnc-scenario-key__cell"})
+                documents_cell_elem = row.find("td", {"data-testid": "tnc-scenario-document-name__cell"})
                 
-                name_cell = cells[0].get_text(strip=True)
-                key_cell = cells[1].get_text(strip=True)
-                documents_cell = cells[2]
+                # Fallback to role="cell" if data-testid not found
+                if not name_cell_elem or not key_cell_elem or not documents_cell_elem:
+                    cells = row.find_all("td", {"role": "cell"})
+                    if len(cells) < 3:
+                        continue
+                    if not name_cell_elem:
+                        name_cell_elem = cells[0]
+                    if not key_cell_elem:
+                        key_cell_elem = cells[1]
+                    if not documents_cell_elem:
+                        documents_cell_elem = cells[2]
+                
+                # Extract text from cells, avoiding nested td text
+                # Get only direct text content, not from nested elements
+                name_cell = self._extract_direct_text(name_cell_elem)
+                key_cell = self._extract_direct_text(key_cell_elem)
+                documents_cell = documents_cell_elem
                 
                 # Extract document numbers from documents cell
-                doc_spans = documents_cell.find_all("span")
+                # Only get direct child spans to avoid nested td content (for malformed HTML)
+                doc_spans = []
+                for child in documents_cell.children:
+                    if hasattr(child, 'name') and child.name == 'span':
+                        # Direct child span
+                        doc_spans.append(child)
+                    elif hasattr(child, 'name') and child.name != 'td':
+                        # Non-td child - get spans from it, but exclude nested td content
+                        for span in child.find_all("span", recursive=True):
+                            # Check if span is inside a nested td
+                            parent = getattr(span, 'parent', None)
+                            if parent:
+                                current = parent
+                                is_nested_td = False
+                                while current and current != documents_cell:
+                                    if hasattr(current, 'name') and current.name == 'td' and current != documents_cell:
+                                        is_nested_td = True
+                                        break
+                                    current = getattr(current, 'parent', None)
+                                if not is_nested_td:
+                                    doc_spans.append(span)
+                
                 documents = [span.get_text(strip=True).rstrip(",") for span in doc_spans if span.get_text(strip=True)]
                 
                 row_data.append({
@@ -370,6 +416,162 @@ class TOMMMParser:
             
         except Exception as e:
             return None
+    
+    def _extract_html_from_html(self, file_path: Path) -> Optional[str]:
+        """Extract HTML content from HTML file, handling iframe content similar to MHTML"""
+        try:
+            content = file_path.read_text(encoding="utf-8")
+            soup = BeautifulSoup(content, "html.parser")
+            
+            # First, check if table is directly in the HTML
+            table = soup.find("table", {"class": "sps-table", "data-testid": "tnc-scenario-table"})
+            if table:
+                return content
+            
+            # Look for iframe with data-testid="app-frame"
+            iframe = soup.find("iframe", {"data-testid": "app-frame"})
+            if iframe:
+                # First, try to find table in srcdoc if present (this is common in saved HTML files)
+                # Similar to how MHTML extracts HTML from parts - srcdoc contains the actual content
+                srcdoc = iframe.get("srcdoc", "")
+                if srcdoc:
+                    # Parse srcdoc to check for table (similar to checking html_parts in MHTML)
+                    srcdoc_soup = BeautifulSoup(srcdoc, "html.parser")
+                    srcdoc_table = srcdoc_soup.find("table", {"class": "sps-table", "data-testid": "tnc-scenario-table"})
+                    if srcdoc_table:
+                        # Return srcdoc as-is (it should be a complete HTML document)
+                        # This is analogous to returning html_part from MHTML's all_html_parts
+                        return srcdoc
+                
+                # Then try src attribute
+                src = iframe.get("src", "")
+                if src:
+                    # Handle different iframe src formats
+                    # Format 1: "l@test files/test/2.html" (relative path)
+                    # Format 2: "cid:frame-...@mhtml.blink" (CID reference, similar to MHTML)
+                    # Format 3: Full URL or file path
+                    
+                    # Try to resolve relative path if it's a file reference
+                    if not src.startswith(("http://", "https://", "cid:", "data:")):
+                        # It's likely a relative file path
+                        # Try multiple path resolution strategies
+                        possible_paths = [
+                            file_path.parent / src,  # Direct relative path
+                            file_path.parent / Path(src).name,  # Just filename in same directory
+                        ]
+                        
+                        # Also try to find file by name in subdirectories
+                        src_name = Path(src).name
+                        if src_name and src_name != src:
+                            # Search in subdirectories
+                            for subdir in file_path.parent.rglob("*"):
+                                if subdir.is_dir():
+                                    possible_file = subdir / src_name
+                                    if possible_file.exists() and possible_file.is_file():
+                                        possible_paths.append(possible_file)
+                        
+                        # Try each possible path
+                        for iframe_file in possible_paths:
+                            if iframe_file.exists() and iframe_file.is_file():
+                                try:
+                                    # Read the iframe content
+                                    iframe_content = iframe_file.read_text(encoding="utf-8")
+                                    iframe_soup = BeautifulSoup(iframe_content, "html.parser")
+                                    # Check if table is in iframe content
+                                    iframe_table = iframe_soup.find("table", {"class": "sps-table", "data-testid": "tnc-scenario-table"})
+                                    if iframe_table:
+                                        return iframe_content
+                                except Exception:
+                                    # If reading fails, try next path
+                                    continue
+                    
+                    # Handle CID references (similar to MHTML)
+                    if src.startswith("cid:"):
+                        # For HTML files with CID, we might need to search in the same file
+                        # or in related files. For now, try to find table in current content
+                        # by searching for embedded HTML
+                        pass
+            
+            # If no iframe or table not found, try to search for embedded HTML content
+            # Some HTML files might have embedded content in script tags or comments
+            scripts = soup.find_all("script")
+            for script in scripts:
+                script_content = script.string
+                if script_content and "tnc-scenario-table" in script_content:
+                    # Try to extract HTML from script
+                    html_match = re.search(r'<html[^>]*>.*?</html>', script_content, re.DOTALL | re.IGNORECASE)
+                    if html_match:
+                        extracted_html = html_match.group(0)
+                        extracted_soup = BeautifulSoup(extracted_html, "html.parser")
+                        if extracted_soup.find("table", {"class": "sps-table", "data-testid": "tnc-scenario-table"}):
+                            return extracted_html
+            
+            # Fallback: return original content
+            return content
+            
+        except Exception as e:
+            # If extraction fails, try to return original content
+            try:
+                return file_path.read_text(encoding="utf-8")
+            except Exception:
+                return None
+    
+    def _extract_direct_text(self, element) -> str:
+        """
+        Extract direct text from element, avoiding text from nested td elements
+        
+        This is needed for malformed HTML where td elements are nested instead of being siblings.
+        We only want text that is directly in the element or in non-td children.
+        
+        Args:
+            element: BeautifulSoup element to extract text from
+            
+        Returns:
+            Extracted text string
+        """
+        if not element:
+            return ""
+        
+        text_parts = []
+        
+        # Iterate through direct children only
+        for child in element.children:
+            if isinstance(child, str):
+                # Direct text node - add it
+                text_parts.append(child.strip())
+            elif hasattr(child, 'name'):
+                # Element node - only process if it's not a nested td
+                if child.name != 'td':
+                    # Get text from this element, but exclude any nested td elements
+                    for text_node in child.stripped_strings:
+                        # Check if this text node is inside a nested td
+                        parent = getattr(text_node, 'parent', None)
+                        if parent:
+                            # Walk up the tree to see if we're inside a nested td
+                            current = parent
+                            is_nested_td = False
+                            while current and current != element:
+                                if hasattr(current, 'name') and current.name == 'td' and current != element:
+                                    is_nested_td = True
+                                    break
+                                current = getattr(current, 'parent', None)
+                            
+                            if not is_nested_td:
+                                text_parts.append(text_node.strip())
+        
+        result = ' '.join(text_parts).strip()
+        
+        # Fallback: if we got nothing or suspiciously long text, try simpler approach
+        if not result or len(result) > 300:
+            # Try getting text but stopping at first nested td
+            all_text = element.get_text(separator=' ', strip=True)
+            # If text seems too long, it might include nested content
+            # For now, return as-is and let the caller handle it
+            # (The data-testid selector should help ensure we get the right cell)
+            if not result:
+                result = all_text
+        
+        return result
     
     def _extract_company_name(self, soup: BeautifulSoup) -> Optional[str]:
         """Extract company name from <h4> inside <section class="sps-main-content sps-column-layout">"""

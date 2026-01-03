@@ -152,8 +152,13 @@ class Item:
         m = re.match(r'^(\S+?)(\d+)\s*\(\s*(\S+?)(\d+)\s*=\s*([A-Za-z0-9]+)\s*\)$', text)
         if m:
             seg_part, digits, qseg, qel, qual = m.groups()
+            # Special generic case for values like P0401, P0101, etc.
+            # P0401 (N1=VN) -> seg = PO4, el = 01; P0109 (UP) -> PO1, 09, etc.
+            if seg_part == "P" and len(digits) >= 3 and digits[0] == "0":
+                seg = "PO" + digits[1]
+                el = digits[-2:].zfill(2)
             # If the element number has 3 or more digits, the first digit belongs to the segment
-            if len(digits) >= 3:
+            elif len(digits) >= 3:
                 # Take the first digit for the segment and the last 2 for the element number
                 # For example, N403 -> seg = N4, el = 03
                 seg = seg_part + digits[0]
@@ -184,8 +189,13 @@ class Item:
         m = re.match(r'^(\S+?)(\d+)\s*\(\s*([A-Za-z0-9]+)\s*\)$', text)
         if m:
             seg_part, digits, qual = m.groups()
+            # Special generic case for values like P0401, P0101, P0109, etc.
+            # P0401 (UP) -> seg = PO4, el = 01; P0109 (UP) -> PO1, 09, etc.
+            if seg_part == "P" and len(digits) >= 3 and digits[0] == "0":
+                seg = "PO" + digits[1]
+                el = digits[-2:].zfill(2)
             # If the element number has 3 or more digits, the first digit belongs to the segment
-            if len(digits) >= 3:
+            elif len(digits) >= 3:
                 # Take the first digit for the segment and the last 2 for the element number
                 # For example, N403 -> seg = N4, el = 03
                 seg = seg_part + digits[0]

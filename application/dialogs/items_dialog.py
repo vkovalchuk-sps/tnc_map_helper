@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
 )
 
-from application.spreadsheet_parser import Item
+from application.parsers.spreadsheet_parser import Item
 from application.translations import TRANSLATIONS
 
 

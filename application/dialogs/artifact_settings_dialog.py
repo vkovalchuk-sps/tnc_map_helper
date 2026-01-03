@@ -9,7 +9,9 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QGroupBox,
     QHeaderView,
+    QHBoxLayout,
     QLabel,
+    QMessageBox,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
@@ -129,7 +131,7 @@ class OrderAckSettingsDialog(QDialog):
         layout.addWidget(self.gen_item_status)
         
         # TLI Sources group
-        tli_group = QGroupBox(self.t.get("tli_sources", "TLI Sources"))
+        tli_group = QGroupBox(self.t.get("generate_tli_values", "Згенерувати значення з TLI полів"))
         tli_layout = QVBoxLayout()
         
         # Scroll area for TLI checkboxes
@@ -247,6 +249,30 @@ class ShipmentSettingsDialog(QDialog):
         layout = QVBoxLayout()
         self.setLayout(layout)
         
+        # ASN Structure group (at the beginning)
+        asn_group = QGroupBox(self.t.get("asn_structure", "Структура ASN"))
+        asn_layout = QHBoxLayout()
+        
+        # Get saved ASN structure states from previous settings
+        saved_asn_structure = previous_settings.get("asn_structure", {})
+        
+        self.asn_soi = QCheckBox("SOI")
+        self.asn_soi.setChecked(saved_asn_structure.get("soi", False))
+        
+        self.asn_sopi = QCheckBox("SOPI")
+        self.asn_sopi.setChecked(saved_asn_structure.get("sopi", True))  # Default checked
+        
+        self.asn_sotpi = QCheckBox("SOTPI")
+        self.asn_sotpi.setChecked(saved_asn_structure.get("sotpi", False))
+        
+        asn_layout.addWidget(self.asn_soi)
+        asn_layout.addWidget(self.asn_sopi)
+        asn_layout.addWidget(self.asn_sotpi)
+        asn_layout.addStretch()
+        
+        asn_group.setLayout(asn_layout)
+        layout.addWidget(asn_group)
+        
         # Main options with previous values
         self.gen_tset_purpose = QCheckBox(self.t.get("gen_tset_purpose_drafts", "Generate TsetPurposeCode drafts"))
         self.gen_tset_purpose.setChecked(previous_settings.get("gen_tset_purpose", True))
@@ -258,7 +284,7 @@ class ShipmentSettingsDialog(QDialog):
         layout.addWidget(self.gen_line_seq)
         
         # TLI Sources group
-        tli_group = QGroupBox(self.t.get("tli_sources", "TLI Sources"))
+        tli_group = QGroupBox(self.t.get("generate_tli_values", "Згенерувати значення з TLI полів"))
         tli_layout = QVBoxLayout()
         
         # Scroll area for TLI checkboxes
@@ -330,13 +356,29 @@ class ShipmentSettingsDialog(QDialog):
         
         # Buttons
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+    
+    def _validate_and_accept(self) -> None:
+        """Validate that at least one ASN structure is selected before accepting"""
+        if not (self.asn_soi.isChecked() or self.asn_sopi.isChecked() or self.asn_sotpi.isChecked()):
+            QMessageBox.warning(
+                self,
+                self.t.get("error", "Error"),
+                self.t.get("asn_structure_required", "Потрібно вибрати хоча б одну структуру ASN (SOI, SOPI або SOTPI)")
+            )
+            return
+        self.accept()
     
     def get_settings(self) -> Dict:
         """Get current settings"""
         return {
+            "asn_structure": {
+                "soi": self.asn_soi.isChecked(),
+                "sopi": self.asn_sopi.isChecked(),
+                "sotpi": self.asn_sotpi.isChecked(),
+            },
             "gen_tset_purpose": self.gen_tset_purpose.isChecked(),
             "gen_line_seq": self.gen_line_seq.isChecked(),
             "tli_sources": {str(item_id): cb.isChecked() for item_id, cb in self.tli_checkboxes.items()},
@@ -391,7 +433,7 @@ class InvoiceSettingsDialog(QDialog):
         layout.addWidget(self.gen_total_amount)
         
         # TLI Sources group
-        tli_group = QGroupBox(self.t.get("tli_sources", "TLI Sources"))
+        tli_group = QGroupBox(self.t.get("generate_tli_values", "Згенерувати значення з TLI полів"))
         tli_layout = QVBoxLayout()
         
         # Scroll area for TLI checkboxes

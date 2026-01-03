@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from application.artifact_settings_dialog import (
+from application.dialogs.artifact_settings_dialog import (
     CSVInboundItemsDialog,
     InvoiceSettingsDialog,
     OrderAckSettingsDialog,
@@ -38,16 +38,17 @@ from application.artifact_settings_dialog import (
     XTLSettingsDialog,
 )
 from application.config import ConfigManager
-from application.csv_parser import CSVArchiveParser
-from application.database import Database
-from application.database_editor import ItemPropertiesEditor
-from application.items_dialog import ItemsInfoDialog
-from application.file_handlers import InputFileFinder, OutputFileWriter, XTLParser
-from application.scenarios_dialog import ScenariosInfoDialog
-from application.spreadsheet_parser import Item, SourcingGroup, SpreadsheetParser
-from application.tommm_parser import InboundDocScenario, TOMMMParser
+from application.parsers.csv_parser import CSVArchiveParser
+from application.database.database_operations import Database
+from application.database.database_editor import ItemPropertiesEditor
+from application.dialogs.items_dialog import ItemsInfoDialog
+from application.file_services import InputFileFinder, OutputFileWriter, XTLParser
+from application.dialogs.scenarios_dialog import ScenariosInfoDialog
+from application.dialogs.sourcing_groups_dialog import SourcingGroupsInfoDialog
+from application.parsers.spreadsheet_parser import Item, SourcingGroup, SpreadsheetParser
+from application.parsers.tommm_parser import InboundDocScenario, TOMMMParser
 from application.translations import TRANSLATIONS
-from application.code_generators import (
+from application.xtl_code_generators import (
     get_tli_fields_code,
     get_850_omm_method_code,
     get_860_omm_method_code,
@@ -120,8 +121,8 @@ class MainWindow(QMainWindow):
         config_dir = Path(__file__).parent / ".config"
         self.config_manager = ConfigManager(config_dir)
 
-        # Database (in application folder)
-        db_path = Path(__file__).parent / "database.db"
+        # Database (in application/database folder)
+        db_path = Path(__file__).parent / "database" / "database.db"
         self.database = Database(db_path)
 
         # Current language
@@ -512,6 +513,22 @@ class MainWindow(QMainWindow):
         )
         buttons_layout.addWidget(self.show_items_button)
 
+        # Button to show sourcing groups information
+        self.show_sourcing_groups_button = QPushButton(t.get("show_sourcing_groups_info", "Показати інформацію Sourcing груп"))
+        self.show_sourcing_groups_button.clicked.connect(self._show_sourcing_groups_info)  # type: ignore[arg-type]
+        self.show_sourcing_groups_button.setFixedWidth(320)
+        self.show_sourcing_groups_button.setStyleSheet(
+            "QPushButton {"
+            "  text-align: center;"
+            "  font-weight: bold;"
+            "  background-color: #e0e0e0;"
+            "}"
+            "QPushButton:disabled {"
+            "  background-color: #f0f0f0;"
+            "}"
+        )
+        buttons_layout.addWidget(self.show_sourcing_groups_button)
+
         # Button to show scenario information
         self.show_scenarios_button = QPushButton(t.get("show_scenarios_info", "Показати інформацію сценаріїв"))
         self.show_scenarios_button.clicked.connect(self._show_scenarios_info)  # type: ignore[arg-type]
@@ -674,8 +691,7 @@ class MainWindow(QMainWindow):
             self.spreadsheet_label.setText(self.spreadsheet_path.name)
             # Parse spreadsheet automatically
             self._parse_spreadsheet()
-            # Enable Items info button when there are parsed items
-            self.show_items_button.setEnabled(bool(self.parsed_items))
+            # Button states are updated in _parse_spreadsheet()
             self.update_process_button_state()
         else:
             self.spreadsheet_path = None
@@ -685,6 +701,7 @@ class MainWindow(QMainWindow):
             self.spreadsheet_parse_success = None
             self.spreadsheet_parse_error = None
             self.show_items_button.setEnabled(False)
+            self.show_sourcing_groups_button.setEnabled(False)
             self.update_process_button_state()
 
     def select_tnc_platform(self) -> None:
@@ -779,6 +796,8 @@ class MainWindow(QMainWindow):
             if self.parsed_items:
                 self.show_items_button.show()
                 self.show_items_button.setEnabled(True)
+                self.show_sourcing_groups_button.show()
+                self.show_sourcing_groups_button.setEnabled(True)
 
         if tnc_platform_path:
             self.tnc_platform_path = tnc_platform_path
@@ -814,6 +833,8 @@ class MainWindow(QMainWindow):
             if self.parsed_items:
                 self.show_items_button.show()
                 self.show_items_button.setEnabled(True)
+                self.show_sourcing_groups_button.show()
+                self.show_sourcing_groups_button.setEnabled(True)
 
         if self.tnc_platform_path is None:
             self._set_not_selected_label(self.tnc_label, is_required=True)
@@ -926,6 +947,11 @@ class MainWindow(QMainWindow):
             elif key == "gen_xtl_860":
                 enabled = all_parsed_successfully and has_860
                 cb.setEnabled(enabled)
+                # If 860 documents are not available, force checkbox off
+                if not enabled and cb.isChecked():
+                    cb.setChecked(False)
+                if not enabled:
+                    self.artifact_settings["gen_xtl_860"] = False
             elif key == "gen_csv_inbound":
                 cb.setEnabled(all_parsed_successfully)
             elif key == "gen_rsx_855":
@@ -933,16 +959,31 @@ class MainWindow(QMainWindow):
                 cb.setEnabled(enabled)
                 if enabled and not cb.isChecked():
                     cb.setChecked(True)
+                # If there are no 855 docs, disable and uncheck
+                if not enabled and cb.isChecked():
+                    cb.setChecked(False)
+                if not enabled:
+                    self.artifact_settings["gen_rsx_855"] = False
             elif key == "gen_rsx_856":
                 enabled = all_parsed_successfully and has_856
                 cb.setEnabled(enabled)
                 if enabled and not cb.isChecked():
                     cb.setChecked(True)
+                # If there are no 856 docs, disable and uncheck
+                if not enabled and cb.isChecked():
+                    cb.setChecked(False)
+                if not enabled:
+                    self.artifact_settings["gen_rsx_856"] = False
             elif key == "gen_rsx_810":
                 enabled = all_parsed_successfully and has_810
                 cb.setEnabled(enabled)
                 if enabled and not cb.isChecked():
                     cb.setChecked(True)
+                # If there are no 810 docs, disable and uncheck
+                if not enabled and cb.isChecked():
+                    cb.setChecked(False)
+                if not enabled:
+                    self.artifact_settings["gen_rsx_810"] = False
             
             if settings_btn:
                 settings_btn.setEnabled(cb.isEnabled())
@@ -1034,8 +1075,25 @@ class MainWindow(QMainWindow):
         # Generate unified RSX 856 test files if checkbox is enabled
         if self.artifact_settings.get("gen_rsx_856", False):
             try:
-                self._generate_rsx_856_test_file(output_dir)
-                self._generate_rsx_856_consolidated_test_file(output_dir)
+                # Get ASN structure settings
+                rsx_settings = self.artifact_settings.get("rsx_856_settings", {})
+                asn_structure = rsx_settings.get("asn_structure", {})
+                soi_enabled = asn_structure.get("soi", False)
+                sopi_enabled = asn_structure.get("sopi", True)  # Default
+                sotpi_enabled = asn_structure.get("sotpi", False)
+                
+                # Generate files for each enabled structure
+                if sopi_enabled:
+                    self._generate_rsx_856_test_file(output_dir, "SOPI")
+                    self._generate_rsx_856_consolidated_test_file(output_dir, "SOPI")
+                
+                if soi_enabled:
+                    self._generate_rsx_856_test_file(output_dir, "SOI")
+                    self._generate_rsx_856_consolidated_test_file(output_dir, "SOI")
+                
+                if sotpi_enabled:
+                    self._generate_rsx_856_test_file(output_dir, "SOTPI")
+                    self._generate_rsx_856_consolidated_test_file(output_dir, "SOTPI")
             except Exception as e:
                 QMessageBox.warning(
                     self,
@@ -1209,15 +1267,15 @@ class MainWindow(QMainWindow):
                 tli_code = ""
 
             if tli_code.strip():
-                # Зберігаємо перший FIELDDEF з javaName="recordType" як є,
-                # а весь інший вміст групи TestLineItemRep підміняємо
-                # згенерованими TLI-полями.
+                # Keep the first FIELDDEF with javaName="recordType" as is,
+                # and replace all other content of the TestLineItemRep group
+                # with generated TLI fields.
                 pattern = (
-                    r"(<GROUPDEF[^>]*javaName=\"testLineItemRep\"[^>]*>\s*\n"  # відкриваючий GROUPDEF
-                    r"(?:\s*<FIELDDEF[^>]*javaName=\"recordType\"[^>]*/>\s*\n)"  # перший FIELDDEF recordType
+                    r"(<GROUPDEF[^>]*javaName=\"testLineItemRep\"[^>]*>\s*\n"  # opening GROUPDEF
+                    r"(?:\s*<FIELDDEF[^>]*javaName=\"recordType\"[^>]*/>\s*\n)"  # first FIELDDEF recordType
                     r")"
-                    r"(.*?)"  # решта FIELDDEF-ів усередині групи
-                    r"(\n\s*</GROUPDEF>)"  # закриваючий GROUPDEF
+                    r"(.*?)"  # remaining FIELDDEFs inside the group
+                    r"(\n\s*</GROUPDEF>)"  # closing GROUPDEF
                 )
 
                 def _tli_repl(m: re.Match) -> str:
@@ -1236,13 +1294,13 @@ class MainWindow(QMainWindow):
                 omm_code = ""
 
             if omm_code.strip():
-                # Замінюємо існуюче оголошення методу private String getOrderManagementModel()
-                # від слова 'private' до першої закриваючої дужки на згенерований блок.
+                # Replace existing method declaration private String getOrderManagementModel()
+                # from the word 'private' to the first closing brace with the generated block.
                 pattern_omm = (
                     r"private\s+String\s+getOrderManagementModel\s*\(\s*\)\s*\{[\s\S]*?\n\}\s*"
                 )
 
-                # Додаємо ще один порожній рядок після методу
+                # Add one more empty line after the method
                 new_text = re.sub(pattern_omm, omm_code + "\n\n", new_text, count=1)
 
         # Optionally regenerate populate methods block in ENVIRONMENT
@@ -1256,11 +1314,11 @@ class MainWindow(QMainWindow):
                 maps_code = ""
                 calls_code = ""
 
-            # 1) Замінюємо декларації Map<String,String> після службового коментаря
+            # 1) Replace Map<String,String> declarations after the service comment
             if maps_code.strip():
                 pattern_maps = (
-                    r"(<\?java\s+// Hashmaps that store relationships between TLI fields and target fields[^\n]*\n)"  # рядок з коментарем
-                    r"((?:Map<String,String>.*\n)+)"  # усі поточні декларації Map
+                    r"(<\?java\s+// Hashmaps that store relationships between TLI fields and target fields[^\n]*\n)"  # line with comment
+                    r"((?:Map<String,String>.*\n)+)"  # all current Map declarations
                 )
 
                 def _maps_repl(m: re.Match) -> str:
@@ -1268,15 +1326,15 @@ class MainWindow(QMainWindow):
 
                 new_text = re.sub(pattern_maps, _maps_repl, new_text, count=1)
 
-            # 2) Замінюємо populate-методи між OMM та sourceFromTLI
+            # 2) Replace populate methods between OMM and sourceFromTLI
             if populate_code.strip():
-                # В оригінальному шаблоні populate-методи йдуть одразу
-                # після getOrderManagementModel() і перед sourceFromTLI.
-                # Замінюємо цей середній блок на згенерований код.
+                # In the original template, populate methods come immediately
+                # after getOrderManagementModel() and before sourceFromTLI.
+                # Replace this middle block with generated code.
                 pattern_pop = (
-                    r"(private\s+String\s+getOrderManagementModel[\s\S]*?\n\}\s*\n\s*\n)"  # метод OMM + порожній рядок
-                    r"([\s\S]*?)"  # старі populate-методи
-                    r"(\n\s*// Source a value from the TLI record to a target record)"  # коментар перед sourceFromTLI
+                    r"(private\s+String\s+getOrderManagementModel[\s\S]*?\n\}\s*\n\s*\n)"  # OMM method + empty line
+                    r"([\s\S]*?)"  # old populate methods
+                    r"(\n\s*// Source a value from the TLI record to a target record)"  # comment before sourceFromTLI
                 )
 
                 def _pop_repl(m: re.Match) -> str:
@@ -1284,14 +1342,14 @@ class MainWindow(QMainWindow):
 
                 new_text = re.sub(pattern_pop, _pop_repl, new_text, count=1)
 
-            # 3) Замінюємо виклики populate-методів у PREVALIDATION.documentFinalize
+            # 3) Replace populate method calls in PREVALIDATION.documentFinalize
             if calls_code.strip():
                 pattern_calls = (
-                    r"(public\s+void\s+documentFinalize\s*\(ValidationEvent\s+e\)\s*\{\s*\n"  # сигнатура
-                    r"\s*//\s*Populate HashMaps that are used for copying values from TLI[^\n]*\n"  # коментар
+                    r"(public\s+void\s+documentFinalize\s*\(ValidationEvent\s+e\)\s*\{\s*\n"  # signature
+                    r"\s*//\s*Populate HashMaps that are used for copying values from TLI[^\n]*\n"  # comment
                     r")"
-                    r"([\s\S]*?)"  # старі виклики populate*
-                    r"(\n\}\s*//end-method)"  # закриття методу
+                    r"([\s\S]*?)"  # old populate* calls
+                    r"(\n\}\s*//end-method)"  # method closing
                 )
 
                 def _calls_repl(m: re.Match) -> str:
@@ -1469,12 +1527,16 @@ class MainWindow(QMainWindow):
 
         tree.write(output_file, encoding="utf-8", xml_declaration=False)
 
-    def _generate_rsx_856_test_file(self, output_dir: Path) -> None:
+    def _generate_rsx_856_test_file(self, output_dir: Path, asn_type: str = "SOPI") -> None:
         """Generate unified RSX 856 XML test file based on Shipment.xml template.
 
         Uses non-consolidated scenarios (includes_856_docs=True, is_consolidated=False)
         and creates a single Shipment/OrderLevel/PackLevel that contains
         max(number_of_lines) ItemLevel repetitions.
+        
+        Args:
+            output_dir: Output directory path
+            asn_type: ASN structure type ("SOPI", "SOI", or "SOTPI")
         """
         # Select non-consolidated 856 scenarios
         scenarios_856 = [
@@ -1535,6 +1597,15 @@ class MainWindow(QMainWindow):
             "TestBSN02",
         )
 
+        # Apply ASN structure transformations
+        if asn_type == "SOI":
+            self._convert_to_soi_structure(root)
+        elif asn_type == "SOTPI":
+            self._add_pack_to_packlevels(root)  # Add P-level Pack first
+            self._convert_to_sotpi_structure(root)
+        else:  # SOPI (default)
+            self._add_pack_to_packlevels(root)
+
         # Prune empty elements
         self._prune_empty_elements(root)
 
@@ -1546,7 +1617,7 @@ class MainWindow(QMainWindow):
 
         rsx_output_dir = output_dir / "RSX test files (outbound docs)"
         rsx_output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = rsx_output_dir / "856_RSX_test_file.xml"
+        output_file = rsx_output_dir / f"856_{asn_type}_RSX_test_file.xml"
 
         tree.write(output_file, encoding="utf-8", xml_declaration=False)
 
@@ -1632,7 +1703,7 @@ class MainWindow(QMainWindow):
 
         tree.write(output_file, encoding="utf-8", xml_declaration=False)
 
-    def _generate_rsx_856_consolidated_test_file(self, output_dir: Path) -> None:
+    def _generate_rsx_856_consolidated_test_file(self, output_dir: Path, asn_type: str = "SOPI") -> None:
         """Generate consolidated RSX 856 XML test file based on Shipment.xml template.
 
         Uses scenarios where includes_856_docs=True and is_consolidated=True.
@@ -1640,6 +1711,10 @@ class MainWindow(QMainWindow):
         PurchaseOrderNumber from scenario.key and ItemLevel repetitions based on
         that scenario's number_of_lines. Additionally, for the first consolidated
         scenario, splits the first PackLevel into two with ShipQty halved.
+        
+        Args:
+            output_dir: Output directory path
+            asn_type: ASN structure type ("SOPI", "SOI", or "SOTPI")
         """
         scenarios_consolidated = [
             s
@@ -1710,12 +1785,13 @@ class MainWindow(QMainWindow):
             created_order_levels.append(order_level)
 
         # Apply TLI Sources values (including Header/Address grouping) first,
-        # щоб усі кількості ShipQty та інші TLI-дані були заповнені.
+        # so that all ShipQty quantities and other TLI data are filled.
         self._apply_tli_sources_856(root)
 
         # For the first consolidated scenario, split first PackLevel in half
-        # на основі вже заповненої кількості ShipQty.
-        if created_order_levels:
+        # based on the already filled ShipQty quantity.
+        # This should only be done for SOPI structure, not for SOI
+        if created_order_levels and asn_type != "SOI":
             self._split_first_packlevel_in_half(created_order_levels[0])
 
         # Apply TsetPurposeCode drafts if enabled
@@ -1734,6 +1810,15 @@ class MainWindow(QMainWindow):
             "TestBSN02",
         )
 
+        # Apply ASN structure transformations
+        if asn_type == "SOI":
+            self._convert_to_soi_structure(root)
+        elif asn_type == "SOTPI":
+            self._add_pack_to_packlevels(root)  # Add P-level Pack first
+            self._convert_to_sotpi_structure(root)
+        else:  # SOPI (default)
+            self._add_pack_to_packlevels(root)
+
         # Prune empty elements
         self._prune_empty_elements(root)
 
@@ -1745,7 +1830,7 @@ class MainWindow(QMainWindow):
 
         rsx_output_dir = output_dir / "RSX test files (outbound docs)"
         rsx_output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = rsx_output_dir / "856_RSX_consolidated_test_file.xml"
+        output_file = rsx_output_dir / f"856_{asn_type}_consolidated_RSX_test_file.xml"
 
         tree.write(output_file, encoding="utf-8", xml_declaration=False)
 
@@ -1954,6 +2039,148 @@ class MainWindow(QMainWindow):
         except ValueError:
             idx = len(children) - 1
         parent.insert(idx + 1, new_pack_level)
+
+    def _add_pack_to_packlevels(self, root: ET.Element) -> None:
+        """Add Pack element with PackLevelType at the beginning of each PackLevel.
+        
+        For each PackLevel element, ensures that a Pack element with PackLevelType='P'
+        is present as the first child. If Pack already exists but is not first, it is
+        moved to the beginning. If Pack doesn't exist, it is created.
+        """
+        for pack_level in root.iter():
+            if not isinstance(pack_level.tag, str):
+                continue
+            if not pack_level.tag.endswith("PackLevel"):
+                continue
+            
+            # Check if Pack element already exists
+            existing_pack = None
+            pack_level_type = None
+            for child in pack_level:
+                if isinstance(child.tag, str) and child.tag.endswith("Pack"):
+                    existing_pack = child
+                    # Find PackLevelType inside existing Pack
+                    for pack_child in child:
+                        if isinstance(pack_child.tag, str) and pack_child.tag.endswith("PackLevelType"):
+                            pack_level_type = pack_child
+                            break
+                    break
+            
+            # Get namespace from PackLevel tag if present
+            if "}" in pack_level.tag:
+                namespace = pack_level.tag[:pack_level.tag.index("}") + 1]
+            else:
+                namespace = ""
+            
+            # Create or update Pack element
+            if existing_pack is None:
+                # Create new Pack element
+                pack_elem = ET.Element(f"{namespace}Pack")
+                pack_level_type_elem = ET.SubElement(pack_elem, f"{namespace}PackLevelType")
+                pack_level_type_elem.text = "P"
+                # Insert at the beginning
+                pack_level.insert(0, pack_elem)
+            else:
+                # Pack exists, check if PackLevelType is present
+                if pack_level_type is None:
+                    # Add PackLevelType to existing Pack
+                    pack_level_type_elem = ET.SubElement(existing_pack, f"{namespace}PackLevelType")
+                    pack_level_type_elem.text = "P"
+                else:
+                    # Ensure PackLevelType has correct value
+                    if pack_level_type.text != "P":
+                        pack_level_type.text = "P"
+                
+                # Move Pack to the beginning if it's not already first
+                if pack_level[0] is not existing_pack:
+                    pack_level.remove(existing_pack)
+                    pack_level.insert(0, existing_pack)
+
+    def _convert_to_soi_structure(self, root: ET.Element) -> None:
+        """Convert Shipment structure to SOI: move all ItemLevel to OrderLevel and remove PackLevel.
+        
+        For SOI structure, all ItemLevel elements are moved directly under OrderLevel,
+        and all PackLevel elements are removed.
+        """
+        # Find all OrderLevel elements
+        for order_level in root.iter():
+            if not isinstance(order_level.tag, str):
+                continue
+            if not order_level.tag.endswith("OrderLevel"):
+                continue
+            
+            # Collect all ItemLevel elements from all PackLevel children
+            items_to_move = []
+            pack_levels_to_remove = []
+            
+            for child in order_level:
+                if isinstance(child.tag, str) and child.tag.endswith("PackLevel"):
+                    pack_levels_to_remove.append(child)
+                    # Collect all ItemLevel from this PackLevel
+                    for pack_child in child:
+                        if isinstance(pack_child.tag, str) and pack_child.tag.endswith("ItemLevel"):
+                            items_to_move.append(pack_child)
+            
+            # Remove PackLevel elements
+            for pack_level in pack_levels_to_remove:
+                order_level.remove(pack_level)
+            
+            # Move all ItemLevel elements directly to OrderLevel
+            for item_level in items_to_move:
+                order_level.append(item_level)
+
+    def _convert_to_sotpi_structure(self, root: ET.Element) -> None:
+        """Convert Shipment structure to SOTPI: wrap each PackLevel with its own T-level PackLevel.
+        
+        For SOTPI structure, each existing PackLevel element is wrapped in its own
+        additional PackLevel that contains Pack with PackLevelType='T'.
+        This means if there are multiple PackLevel elements in an OrderLevel,
+        each one gets wrapped separately.
+        """
+        # Find all OrderLevel elements
+        for order_level in root.iter():
+            if not isinstance(order_level.tag, str):
+                continue
+            if not order_level.tag.endswith("OrderLevel"):
+                continue
+            
+            # Collect ALL PackLevel elements (including all repetitions)
+            # Use list() to create a copy to avoid iteration issues when modifying
+            pack_levels = []
+            for child in list(order_level):
+                if isinstance(child.tag, str) and child.tag.endswith("PackLevel"):
+                    pack_levels.append(child)
+            
+            if not pack_levels:
+                continue
+            
+            # Get namespace from OrderLevel tag if present
+            if "}" in order_level.tag:
+                namespace = order_level.tag[:order_level.tag.index("}") + 1]
+            else:
+                namespace = ""
+            
+            # For each PackLevel, wrap it in its own T-level PackLevel
+            for original_pack_level in pack_levels:
+                # Remove original PackLevel from OrderLevel
+                order_level.remove(original_pack_level)
+                
+                # Create new T-level PackLevel for this specific PackLevel
+                t_pack_level = ET.Element(f"{namespace}PackLevel")
+                
+                # Add Pack with PackLevelType='T' at the beginning
+                pack_elem = ET.Element(f"{namespace}Pack")
+                pack_level_type_elem = ET.SubElement(pack_elem, f"{namespace}PackLevelType")
+                pack_level_type_elem.text = "T"
+                t_pack_level.insert(0, pack_elem)
+                
+                # Move the original PackLevel into T-level PackLevel
+                t_pack_level.append(original_pack_level)
+                
+                # Add T-level PackLevel to OrderLevel (in the same position)
+                # Find the position where original was and insert there
+                # Since we're processing in order, we can just append
+                order_level.append(t_pack_level)
 
     def _apply_ack_type_drafts(self, root: ET.Element) -> None:
         """Set AcknowledgementType to AD and add commented alternatives.
@@ -2266,9 +2493,9 @@ class MainWindow(QMainWindow):
 
         def apply_normal_item(item: Item, path_parts: List[str]) -> None:
             """Apply a single header item without Extra Record grouping."""
-            # Якщо шлях містить OrderLevel, значення має бути вставлене
-            # в кожен Shipment/OrderLevel (наприклад, OrderHeader/Vendor
-            # для кожного замовлення в консолідованому 856).
+            # If the path contains OrderLevel, the value must be inserted
+            # into each Shipment/OrderLevel (e.g., OrderHeader/Vendor
+            # for each order in consolidated 856).
             if "OrderLevel" in path_parts:
                 try:
                     idx = path_parts.index("OrderLevel")
@@ -2284,7 +2511,7 @@ class MainWindow(QMainWindow):
                 for order_level in order_levels:
                     self._set_xml_value_by_path(order_level, sub_parts, item.tli_value)
             else:
-                # Звичайний випадок: один елемент під Header/Shipment
+                # Normal case: one element under Header/Shipment
                 self._set_xml_value_by_path(root, path_parts, item.tli_value)
 
         self._apply_header_items_with_extra_records(
@@ -2300,16 +2527,16 @@ class MainWindow(QMainWindow):
         if not detail_items:
             return
 
-        # Для консолідованого 856 нумерація повинна починатися з 1
-        # всередині кожного OrderLevel окремо. Тому обробляємо ItemLevel
-        # по групах OrderLevel, а не одним суцільним списком.
+        # For consolidated 856, numbering should start from 1
+        # within each OrderLevel separately. Therefore, we process ItemLevel
+        # by OrderLevel groups, not as one continuous list.
 
         order_levels = [
             elem for elem in root.iter() if isinstance(elem.tag, str) and elem.tag.endswith("OrderLevel")
         ]
 
         if order_levels:
-            # Основний шлях: є явні OrderLevel, нумерація скидається для кожного
+            # Main path: there are explicit OrderLevels, numbering resets for each
             for order_level in order_levels:
                 item_levels = [
                     elem
@@ -2335,7 +2562,7 @@ class MainWindow(QMainWindow):
 
                     self._apply_detail_items_with_extra_records(item_level, items_for_level)
         else:
-            # Fallback: старий режим, якщо з якихось причин немає тегів OrderLevel
+            # Fallback: old mode, if for some reason there are no OrderLevel tags
             item_levels = [
                 elem for elem in root.iter() if isinstance(elem.tag, str) and elem.tag.endswith("ItemLevel")
             ]
@@ -2922,6 +3149,7 @@ class MainWindow(QMainWindow):
 
         # Parsed data buttons
         self.show_items_button.setText(t.get("show_items_info", "Show data from inbound items"))
+        self.show_sourcing_groups_button.setText(t.get("show_sourcing_groups_info", "Show Sourcing Groups Information"))
         self.show_scenarios_button.setText(t.get("show_scenarios_info", "Show Scenarios Information"))
 
         # Labels
@@ -2976,6 +3204,9 @@ class MainWindow(QMainWindow):
         self._update_spreadsheet_status_icon()
         # Enable Items button only when parsing is successful and items exist
         self.show_items_button.setEnabled(bool(self.parsed_items) and bool(self.spreadsheet_parse_success))
+        self.show_sourcing_groups_button.setEnabled(bool(self.parsed_items) and bool(self.spreadsheet_parse_success))
+        # Refresh dependent UI (process button, artifact checkboxes)
+        self.update_process_button_state()
     
     def _update_spreadsheet_status_icon(self) -> None:
         """Update spreadsheet parsing status button"""
@@ -3091,6 +3322,8 @@ class MainWindow(QMainWindow):
         
         # Update status icon
         self._update_csv_archive_status_icon()
+        # Refresh dependent UI (process button, artifact checkboxes)
+        self.update_process_button_state()
     
     def _update_csv_archive_status_icon(self) -> None:
         """Update CSV archive parsing status button"""
@@ -3264,6 +3497,13 @@ class MainWindow(QMainWindow):
         )
         dialog.exec()
 
+    def _show_sourcing_groups_info(self) -> None:
+        """Show information about Sourcing Groups"""
+        if not self.parsed_items:
+            return
+        dialog = SourcingGroupsInfoDialog(self.parsed_items, self.current_language, parent=self)
+        dialog.exec()
+
     def _show_items_info(self) -> None:
         """Show information about parsed Item instances"""
         if not self.parsed_items:
@@ -3290,6 +3530,8 @@ class MainWindow(QMainWindow):
         # Always update company name if parsed (both on auto-parse and refresh)
         if company_name:
             self.company_name_field.setText(company_name)
+        # Refresh dependent UI (process button, artifact checkboxes)
+        self.update_process_button_state()
     
     def _update_tnc_status_icon(self) -> None:
         """Update TOMMM parsing status button"""

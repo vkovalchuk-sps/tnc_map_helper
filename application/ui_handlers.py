@@ -5,7 +5,7 @@ from typing import Callable, Optional
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from application.file_handlers import InputFileFinder, OutputFileWriter, XTLParser
+from application.file_services import InputFileFinder, OutputFileWriter, XTLParser
 from application.translations import TRANSLATIONS
 
 

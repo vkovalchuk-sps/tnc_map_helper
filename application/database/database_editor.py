@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from application.database import Database, DuplicateItemError
+from application.database.database_operations import Database, DuplicateItemError
 from application.translations import TRANSLATIONS
 
 
