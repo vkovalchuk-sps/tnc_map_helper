@@ -8,7 +8,7 @@ output/*
 # .config/
 
 # PyInstaller build artifacts
-TNCMapHelper.spec
+# TNCMapHelper.spec - TRACKED IN GIT (build configuration file)
 build/
 dist/
 
