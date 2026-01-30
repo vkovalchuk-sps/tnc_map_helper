@@ -48,8 +48,16 @@ class CSVArchiveParser:
         try:
             with zipfile.ZipFile(archive_path, 'r') as zip_ref:
                 # Get all CSV files from archive (both .csv and .txt extensions)
-                csv_files = [f for f in zip_ref.namelist() 
-                            if f.lower().endswith('.csv') or f.lower().endswith('.txt')]
+                # Filter only files that start with "PO850" or "PC860"
+                all_files = zip_ref.namelist()
+                csv_files = []
+                for f in all_files:
+                    # Get filename without path (in case file is in subdirectory)
+                    filename = Path(f).name
+                    # Check if file has CSV/TXT extension and starts with PO850 or PC860
+                    if ((f.lower().endswith('.csv') or f.lower().endswith('.txt')) and
+                        (filename.startswith("PO850") or filename.startswith("PC860"))):
+                        csv_files.append(f)
                 
                 if not csv_files:
                     return False, self.t.get("csv_no_files", "No CSV files found in archive")
@@ -121,10 +129,25 @@ class CSVArchiveParser:
                 # Check if all scenarios were updated
                 if len(updated_scenarios) != len(scenarios):
                     missing_count = len(scenarios) - len(updated_scenarios)
+                    # Find scenarios that were not updated
+                    all_scenario_ids = {id(scenario) for scenario in scenarios}
+                    missing_scenario_ids = all_scenario_ids - updated_scenarios
+                    missing_scenarios = [
+                        scenario for scenario in scenarios 
+                        if id(scenario) in missing_scenario_ids
+                    ]
+                    # Build list of missing scenario identifiers
+                    missing_list = []
+                    for scenario in missing_scenarios:
+                        scenario_info = f"{scenario.name} (key: {scenario.key})"
+                        missing_list.append(scenario_info)
+                    
+                    missing_scenarios_text = "\n  - ".join(missing_list)
                     errors.append(
                         self.t.get("csv_not_all_updated", 
-                            "Not all scenarios were updated. Missing: {count}").format(
-                            count=missing_count
+                            "Not all scenarios were updated. Missing: {count}\nMissing scenarios:\n  - {scenarios}").format(
+                            count=missing_count,
+                            scenarios=missing_scenarios_text
                         )
                     )
                 

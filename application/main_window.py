@@ -1,7 +1,7 @@
 """Main window module for the application"""
 
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import copy
 import csv
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from application.dialogs.about_dialog import AboutDialog
 from application.dialogs.artifact_settings_dialog import (
     CSVInboundItemsDialog,
     InvoiceSettingsDialog,
@@ -71,7 +72,7 @@ class MainWindow(QMainWindow):
         """
         super().__init__()
         self.base_path = base_path
-        self.setWindowTitle("TNC Map Helper")
+        self.setWindowTitle("T&C Map Helper")
         self.setMinimumWidth(600)
         
         # Set window icon
@@ -161,6 +162,11 @@ class MainWindow(QMainWindow):
             self._refresh_tnc_parsing()
         if self.csv_archive_path:
             self._refresh_csv_archive_parsing()
+
+    def _show_about_dialog(self) -> None:
+        """Show the About dialog with application information and links."""
+        dialog = AboutDialog(self.database, self)
+        dialog.exec()
 
     def _create_gear_icon(self) -> QIcon:
         """Create a simple gear-like icon for settings buttons using text"""
@@ -368,6 +374,21 @@ class MainWindow(QMainWindow):
 
         # Language selector on the left
         language_layout = QHBoxLayout()
+        
+        # Help button with question mark icon
+        help_button = QPushButton("?")
+        help_button.setFixedWidth(25)
+        help_button.setFixedHeight(25)
+        help_font = help_button.font()
+        help_font.setPointSize(10)
+        help_font.setBold(True)
+        help_button.setFont(help_font)
+        help_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        help_button.setToolTip("About T&C Map Helper")
+        help_button.clicked.connect(self._show_about_dialog)  # type: ignore[arg-type]
+        language_layout.addWidget(help_button)
+        language_layout.addSpacing(10)  # Add spacing between question mark and Language
+        
         language_label = QLabel("Language:")
         self.language_combo = QComboBox()
         self.language_combo.addItems(["UA", "EN"])
@@ -947,6 +968,9 @@ class MainWindow(QMainWindow):
             elif key == "gen_xtl_860":
                 enabled = all_parsed_successfully and has_860
                 cb.setEnabled(enabled)
+                # If 860 documents are available, check the checkbox by default
+                if enabled and not cb.isChecked():
+                    cb.setChecked(True)
                 # If 860 documents are not available, force checkbox off
                 if not enabled and cb.isChecked():
                     cb.setChecked(False)
@@ -1162,7 +1186,7 @@ class MainWindow(QMainWindow):
         if not gen_850 and not gen_860:
             return
 
-        templates_dir = self.base_path / "application" / "templates"
+        templates_dir = Path(__file__).parent / "templates"
 
         if gen_850:
             template_850 = templates_dir / "poRsxRead.xtl"
@@ -1184,11 +1208,16 @@ class MainWindow(QMainWindow):
         if gen_860:
             template_860 = templates_dir / "pcRsxRead.xtl"
             if template_860.exists():
+                # If java_package ends with "po", replace it with "pc" for pcRsxRead
+                java_package_860 = java_package
+                if java_package_860.endswith("po"):
+                    java_package_860 = java_package_860[:-2] + "pc"
+                
                 self._generate_single_xtl(
                     template_path=template_860,
                     output_path=output_dir / "pcRsxRead.xtl",
                     company_name=company_name,
-                    java_package=java_package,
+                    java_package=java_package_860,
                     author=author,
                     java_name="pcRsxRead",
                     gen_tli_fields=gen_tli_860,
@@ -1450,6 +1479,10 @@ class MainWindow(QMainWindow):
                 # Replace the configured fragment in the XTL text
                 new_text = new_text.replace(replace_fragment, final_block)
 
+        # When generating pcRsxRead, replace all poRsxRead references with pcRsxRead
+        if not is_850 and java_name == "pcRsxRead":
+            new_text = new_text.replace("poRsxRead", "pcRsxRead")
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(new_text, encoding="utf-8")
 
@@ -1475,7 +1508,7 @@ class MainWindow(QMainWindow):
         scenario_for_seq = max(scenarios_855, key=lambda s: s.number_of_lines or 0)
 
         # Load OrderAck.xml template from templates folder
-        template_path = self.base_path / "application" / "templates" / "OrderAck.xml"
+        template_path = Path(__file__).parent / "templates" / "OrderAck.xml"
         tree = ET.parse(template_path)
         root = tree.getroot()
 
@@ -1510,8 +1543,18 @@ class MainWindow(QMainWindow):
             "TestTPID",
         )
 
+        # Reorder elements to match template structure
+        template_tree = ET.parse(template_path)
+        template_root = template_tree.getroot()
+        self._reorder_elements_by_template(root, template_root)
+
         # Prune empty elements
         self._prune_empty_elements(root)
+
+        # Reorder again after pruning to ensure correct order
+        template_tree = ET.parse(template_path)
+        template_root = template_tree.getroot()
+        self._reorder_elements_by_template(root, template_root)
 
         # Pretty-print / indent XML (without XML declaration)
         # Prefer built-in ET.indent when available to keep opening/closing
@@ -1561,7 +1604,7 @@ class MainWindow(QMainWindow):
         scenario_for_seq = max(scenarios_856, key=lambda s: s.number_of_lines or 0)
 
         # Load Shipment.xml template
-        template_path = self.base_path / "application" / "templates" / "Shipment.xml"
+        template_path = Path(__file__).parent / "templates" / "Shipment.xml"
         tree = ET.parse(template_path)
         root = tree.getroot()
 
@@ -1606,8 +1649,18 @@ class MainWindow(QMainWindow):
         else:  # SOPI (default)
             self._add_pack_to_packlevels(root)
 
+        # Reorder elements to match template structure
+        template_tree = ET.parse(template_path)
+        template_root = template_tree.getroot()
+        self._reorder_elements_by_template(root, template_root)
+
         # Prune empty elements
         self._prune_empty_elements(root)
+
+        # Reorder again after pruning to ensure correct order
+        template_tree = ET.parse(template_path)
+        template_root = template_tree.getroot()
+        self._reorder_elements_by_template(root, template_root)
 
         # Pretty-print / indent XML (without XML declaration)
         if hasattr(ET, "indent"):
@@ -1644,7 +1697,7 @@ class MainWindow(QMainWindow):
         scenario_for_seq = max(scenarios_810, key=lambda s: s.number_of_lines or 0)
 
         # Load Invoice.xml template from templates folder
-        template_path = self.base_path / "application" / "templates" / "Invoice.xml"
+        template_path = Path(__file__).parent / "templates" / "Invoice.xml"
         tree = ET.parse(template_path)
         root = tree.getroot()
 
@@ -1688,8 +1741,21 @@ class MainWindow(QMainWindow):
         if gen_total_amount:
             self._apply_total_amount_810(root)
 
+        # Reorder elements to match template structure
+        template_tree = ET.parse(template_path)
+        template_root = template_tree.getroot()
+        self._reorder_elements_by_template(root, template_root)
+
         # Prune empty elements
         self._prune_empty_elements(root)
+
+        # Reorder again after pruning to ensure correct order
+        template_tree = ET.parse(template_path)
+        template_root = template_tree.getroot()
+        self._reorder_elements_by_template(root, template_root)
+
+        # Ensure Summary is at the end after all LineItem elements
+        self._move_summary_to_end_810(root)
 
         # Pretty-print / indent XML (without XML declaration)
         if hasattr(ET, "indent"):
@@ -1728,7 +1794,7 @@ class MainWindow(QMainWindow):
         gen_tset_purpose = rsx_settings.get("gen_tset_purpose", True)
         gen_line_seq = rsx_settings.get("gen_line_seq", True)
 
-        template_path = self.base_path / "application" / "templates" / "Shipment.xml"
+        template_path = Path(__file__).parent / "templates" / "Shipment.xml"
         tree = ET.parse(template_path)
         root = tree.getroot()
 
@@ -1819,8 +1885,18 @@ class MainWindow(QMainWindow):
         else:  # SOPI (default)
             self._add_pack_to_packlevels(root)
 
+        # Reorder elements to match template structure
+        template_tree = ET.parse(template_path)
+        template_root = template_tree.getroot()
+        self._reorder_elements_by_template(root, template_root)
+
         # Prune empty elements
         self._prune_empty_elements(root)
+
+        # Reorder again after pruning to ensure correct order
+        template_tree = ET.parse(template_path)
+        template_root = template_tree.getroot()
+        self._reorder_elements_by_template(root, template_root)
 
         # Pretty-print / indent XML (without XML declaration)
         if hasattr(ET, "indent"):
@@ -2908,6 +2984,159 @@ class MainWindow(QMainWindow):
             current = found
         current.text = value
 
+    def _is_comment(self, node) -> bool:
+        """Check if a node is a comment."""
+        # Comments don't have a 'tag' attribute, or have tag that is not a string
+        return not hasattr(node, 'tag') or not isinstance(node.tag, str)
+    
+    def _get_tag_from_comment(self, comment) -> str:
+        """Extract tag name from a comment like '<PurchaseOrderNumber>value</PurchaseOrderNumber>'."""
+        if not self._is_comment(comment):
+            return ""
+        text = getattr(comment, 'text', None) or ""
+        # Extract tag name from comment text like "<TagName>value</TagName>"
+        match = re.match(r"<([^>]+)>", text.strip())
+        if match:
+            return match.group(1)
+        return ""
+
+    def _reorder_elements_by_template(self, element: ET.Element, template_element: ET.Element) -> None:
+        """Recursively reorder child elements to match the template structure.
+        
+        This ensures that the order of tags in generated test files matches
+        the order in the template files. Comments are preserved next to their
+        corresponding elements.
+        """
+        if not isinstance(element.tag, str) or not isinstance(template_element.tag, str):
+            return
+        
+        # Get template children list
+        template_children_list: List[ET.Element] = []
+        for template_child in template_element:
+            if isinstance(template_child.tag, str):
+                template_children_list.append(template_child)
+        
+        # Get current element children list (make a copy to avoid modification during iteration)
+        # This includes both elements and comments
+        element_children_list: List = list(element)
+        
+        # First, recursively process all children to reorder their children
+        # Match element children to template children by tag name and process recursively
+        element_children_by_tag: Dict[str, List[ET.Element]] = {}
+        for child in element_children_list:
+            if isinstance(child.tag, str):
+                tag_name = child.tag
+                if tag_name not in element_children_by_tag:
+                    element_children_by_tag[tag_name] = []
+                element_children_by_tag[tag_name].append(child)
+        
+        # Track which element children have been matched
+        matched_elements: Set[ET.Element] = set()
+        tag_index_map: Dict[str, int] = {}
+        
+        # Recursively process matching children
+        for template_child in template_children_list:
+            tag_name = template_child.tag
+            if tag_name in element_children_by_tag:
+                idx = tag_index_map.get(tag_name, 0)
+                if idx < len(element_children_by_tag[tag_name]):
+                    element_child = element_children_by_tag[tag_name][idx]
+                    self._reorder_elements_by_template(element_child, template_child)
+                    matched_elements.add(element_child)
+                    tag_index_map[tag_name] = idx + 1
+        
+        # Process any unmatched element children (use last template child of same tag as reference)
+        for tag_name, children in element_children_by_tag.items():
+            for child in children:
+                if child not in matched_elements:
+                    # Find last template child with same tag
+                    last_template = None
+                    for template_child in reversed(template_children_list):
+                        if template_child.tag == tag_name:
+                            last_template = template_child
+                            break
+                    if last_template:
+                        self._reorder_elements_by_template(child, last_template)
+        
+        # Now reorder the children at this level according to template order
+        # Get fresh list of children after recursive processing (includes comments)
+        current_children: List = list(element)
+        
+        # Separate elements and comments
+        elements_only: List[ET.Element] = []
+        comments: List = []
+        for child in current_children:
+            if self._is_comment(child):
+                comments.append(child)
+            elif isinstance(child.tag, str):
+                elements_only.append(child)
+        
+        # Map comments to their associated elements by tag name
+        comments_by_tag: Dict[str, List] = {}
+        for comment in comments:
+            tag_name = self._get_tag_from_comment(comment)
+            if tag_name:
+                if tag_name not in comments_by_tag:
+                    comments_by_tag[tag_name] = []
+                comments_by_tag[tag_name].append(comment)
+        
+        # Create a mapping of tag names to elements
+        element_map: Dict[str, List[ET.Element]] = {}
+        for child in elements_only:
+            tag_name = child.tag
+            if tag_name not in element_map:
+                element_map[tag_name] = []
+            element_map[tag_name].append(child)
+        
+        # Create ordered list based on template (elements + their comments)
+        ordered_children: List = []
+        used_elements: Set[ET.Element] = set()
+        used_comments: Set = set()
+        
+        # Add elements in the order they appear in template, with their comments
+        for template_child in template_children_list:
+            tag_name = template_child.tag
+            if tag_name in element_map:
+                # Find the first unused element with this tag
+                for child in element_map[tag_name]:
+                    if child not in used_elements:
+                        ordered_children.append(child)
+                        used_elements.add(child)
+                        # Add associated comments immediately after the element
+                        if tag_name in comments_by_tag:
+                            for comment in comments_by_tag[tag_name]:
+                                if comment not in used_comments:
+                                    ordered_children.append(comment)
+                                    used_comments.add(comment)
+                        break
+        
+        # Add any remaining elements that weren't in template (shouldn't happen, but just in case)
+        for child in elements_only:
+            if child not in used_elements:
+                ordered_children.append(child)
+                used_elements.add(child)
+                # Add associated comments immediately after the element
+                tag_name = child.tag
+                if tag_name in comments_by_tag:
+                    for comment in comments_by_tag[tag_name]:
+                        if comment not in used_comments:
+                            ordered_children.append(comment)
+                            used_comments.add(comment)
+        
+        # Add any remaining comments that weren't associated with any element
+        for comment in comments:
+            if comment not in used_comments:
+                ordered_children.append(comment)
+        
+        # Reorder children in the element
+        if ordered_children:
+            # Remove all children first
+            for child in list(element):
+                element.remove(child)
+            # Add them back in the correct order using insert to maintain order
+            for i, child in enumerate(ordered_children):
+                element.insert(i, child)
+
     def _prune_empty_elements(self, element: ET.Element) -> bool:
         """Recursively remove elements that have no text and no children.
 
@@ -3055,6 +3284,36 @@ class MainWindow(QMainWindow):
             total += 200.0
 
         total_amount_elem.text = f"{total:.2f}"
+
+    def _move_summary_to_end_810(self, root: ET.Element) -> None:
+        """Move Summary element to the end after all LineItem elements."""
+        # Find the root Invoice element
+        invoice_root = root
+        if not isinstance(invoice_root.tag, str) or not invoice_root.tag.endswith("Invoice"):
+            # If root is not Invoice, find it
+            for elem in root.iter():
+                if isinstance(elem.tag, str) and elem.tag.endswith("Invoice"):
+                    invoice_root = elem
+                    break
+        
+        if invoice_root is None:
+            return
+        
+        # Find Summary element
+        summary_elem = None
+        for elem in invoice_root:
+            if isinstance(elem.tag, str) and elem.tag.endswith("Summary"):
+                summary_elem = elem
+                break
+        
+        if summary_elem is None:
+            return
+        
+        # Remove Summary from current position
+        invoice_root.remove(summary_elem)
+        
+        # Add Summary at the end
+        invoice_root.append(summary_elem)
 
     def _generate_csv_test_files(self, output_dir: Path) -> None:
         """Generate CSV test files for inbound documents"""

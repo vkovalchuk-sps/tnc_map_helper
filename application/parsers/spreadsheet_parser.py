@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import openpyxl
 from openpyxl import load_workbook
@@ -98,15 +98,20 @@ class Item:
         
         # Find all keys and their values
         # Key = non-whitespace characters followed by ':' and spaces
-        # Value = everything until the next key or end of line
+        # Value = everything until the next key (pattern: number followed by ':') or end of line
+        # Also handle cases like "850: PO103 / 860: POC05" where we need to extract "PO103" (before "/")
         pairs = re.findall(
-            r'(\S+):\s*([^:]+?)(?=\s*\S+:|$)',
+            r'(\S+):\s*([^:]+?)(?=\s*\d+:|$)',
             line
         )
         
         for key, value in pairs:
             if "850" in key:
-                return value.strip()
+                # Remove trailing "/" and whitespace if present
+                value = value.strip()
+                if value.endswith("/"):
+                    value = value[:-1].strip()
+                return value
         
         # If key 850 is not found, return the original line
         return line
@@ -139,6 +144,27 @@ class Item:
         
         if not text:
             return "", "", ""
+
+        # Format: "850: P0107/PO109 (IB)" or "P0107/PO109 (IB)" (after clear_edi_info)
+        # Extract prefix (optional, e.g., "850:"), segment variants (e.g., "P0107/PO109"), and qualifier (e.g., "(IB)")
+        m = re.match(r'^(?:\d+:\s*)?([^/]+)(?:/[^)]+)?\s*\(([A-Za-z0-9]+)\)$', text)
+        if m:
+            segment_part, qual = m.groups()
+            # Parse segment part (e.g., "P0107" -> PO1, 07)
+            seg_part = segment_part.strip()
+            # Handle P0107 format
+            if seg_part.startswith("P0") and len(seg_part) >= 4:
+                # P0107 -> PO1, 07
+                seg_digit = seg_part[2]  # Get digit after "P0" (index 2)
+                el = seg_part[3:].zfill(2)  # Get remaining digits as element number (from index 3)
+                seg = f"PO{seg_digit}"
+                return seg, el, qual
+            # Handle PO109 format (if segment_part is already PO1)
+            elif seg_part.startswith("PO") and len(seg_part) >= 4:
+                # PO109 -> PO1, 09
+                seg = seg_part[:3]  # PO1
+                el = seg_part[3:].zfill(2)  # 09
+                return seg, el, qual
 
         # Special handling for values like P0401, P0402, P0101, etc.
         # P0401 -> seg = PO4, el = 01; P0101 -> PO1, 01; P0402 -> PO4, 02, etc.
@@ -377,6 +403,49 @@ class SpreadsheetParser:
                     items.append(item)
                     continue
                 
+                # Check if spreadsheet_edi_info_text is "Blank" (case-insensitive)
+                is_blank = item.spreadsheet_edi_info_text.strip().lower() == "blank"
+                
+                if is_blank:
+                    # Special handling for "Blank" values
+                    # Don't parse EDI info or search in database
+                    # Set tli_tag_850 from spreadsheet_label (letters only, first letter uppercase, rest keep original case)
+                    if item.spreadsheet_label:
+                        # Extract only letters from spreadsheet_label
+                        letters_only = ''.join(c for c in item.spreadsheet_label if c.isalpha())
+                        # Make first letter uppercase, rest keep original case
+                        if letters_only:
+                            item.tli_tag_850 = letters_only[0].upper() + letters_only[1:]
+                        else:
+                            item.tli_tag_850 = ""
+                    else:
+                        item.tli_tag_850 = ""
+                    
+                    # Set tli_value to empty string
+                    item.tli_value = ""
+                    
+                    # Skip EDI parsing and database matching
+                    item.parsing_errors = column_errors
+                    items.append(item)
+                    continue
+                
+                # Check if spreadsheet_label contains EDI info in format "850: ... / 860: ..."
+                # If so, parse it and use it instead of spreadsheet_edi_info_text
+                edi_info_from_label = None
+                if item.spreadsheet_label and "850:" in item.spreadsheet_label:
+                    try:
+                        # Extract EDI info from label (e.g., "850: PO103 / 860: POC05" -> "PO103")
+                        cleared_label = Item.clear_edi_info(item.spreadsheet_label)
+                        if cleared_label and cleared_label != item.spreadsheet_label:
+                            # Try to parse it
+                            seg, el, qual = Item.parse_edi_info(cleared_label)
+                            if seg and el:
+                                # Successfully parsed from label, use this
+                                edi_info_from_label = (seg, el, qual)
+                    except Exception:
+                        # If parsing from label fails, continue with normal flow
+                        pass
+                
                 # Parse spreadsheet_edi_info_text_cleared
                 try:
                     item.spreadsheet_edi_info_text_cleared = Item.clear_edi_info(item.spreadsheet_edi_info_text)
@@ -437,25 +506,40 @@ class SpreadsheetParser:
 
                 # Parse EDI info (for all other cases)
                 if not special_n104_handled:
-                    try:
-                        edi_segment, edi_element_number, edi_qualifier = Item.parse_edi_info(
-                            item.spreadsheet_edi_info_text_cleared
-                        )
-                        item.edi_segment = edi_segment
-                        item.edi_element_number = edi_element_number
-                        item.edi_qualifier = edi_qualifier
-                    except Exception as e:
+                    # If EDI info was successfully parsed from spreadsheet_label, use it
+                    if edi_info_from_label:
+                        item.edi_segment, item.edi_element_number, item.edi_qualifier = edi_info_from_label
+                    else:
+                        # Otherwise, parse from spreadsheet_edi_info_text
+                        try:
+                            edi_segment, edi_element_number, edi_qualifier = Item.parse_edi_info(
+                                item.spreadsheet_edi_info_text_cleared
+                            )
+                            item.edi_segment = edi_segment
+                            item.edi_element_number = edi_element_number
+                            item.edi_qualifier = edi_qualifier
+                        except Exception as e:
+                            error_msg = (
+                                f"{self.t['error_column']} {self._column_letter(col_idx)}: "
+                                f"{self.t['error_parse_edi_info']}: {str(e)}"
+                            )
+                            column_errors.append(error_msg)
+                            all_errors.append(error_msg)
+                            item.parsing_errors = column_errors
+                            items.append(item)
+                            continue
+                    
+                    # Check if we successfully parsed at least edi_segment and edi_element_number
+                    if not item.edi_segment or not item.edi_element_number:
                         error_msg = (
                             f"{self.t['error_column']} {self._column_letter(col_idx)}: "
-                            f"{self.t['error_parse_edi_info']}: {str(e)}"
+                            f"{self.t['error_failed_to_parse_edi_fields'].format(text=item.spreadsheet_edi_info_text_cleared)}"
                         )
                         column_errors.append(error_msg)
                         all_errors.append(error_msg)
-                        item.parsing_errors = column_errors
-                        items.append(item)
-                        continue
                 
                 # Match with database
+                # Only attempt matching if we have edi_segment and edi_element_number
                 if item.edi_segment and item.edi_element_number:
                     match_errors = self._match_with_database(item, col_idx)
                     column_errors.extend(match_errors)
@@ -466,6 +550,9 @@ class SpreadsheetParser:
             
             workbook.close()
             
+            # Handle duplicate EDI combinations by adding sequential numbers to tli_tag_850
+            self._handle_duplicate_edi_combinations(items)
+            
             # Check if parsing was successful
             success = len(all_errors) == 0
             error_message = "\n".join(all_errors) if all_errors else None
@@ -474,6 +561,53 @@ class SpreadsheetParser:
             
         except Exception as e:
             return [], False, f"{self.t['error_read_file']}: {str(e)}"
+    
+    def _handle_duplicate_edi_combinations(self, items: List[Item]) -> None:
+        """
+        Handle duplicate EDI combinations by adding sequential numbers to tli_tag_850.
+        
+        For items with the same combination of edi_segment, edi_element_number, edi_qualifier,
+        the second and subsequent items will have a sequential number (2, 3, 4, etc.) appended
+        to their tli_tag_850.
+        
+        Args:
+            items: List of parsed Item objects
+        """
+        # Dictionary to track occurrences of EDI combinations
+        # Key: tuple of (edi_segment, edi_element_number, edi_qualifier)
+        # Value: list of indices in items list where this combination appears
+        edi_combination_indices: Dict[Tuple[str, str, str], List[int]] = {}
+        
+        # First pass: collect all items with EDI fields and group by combination
+        for idx, item in enumerate(items):
+            # Skip items without EDI fields (e.g., "Blank" cases or parsing errors)
+            if not item.edi_segment or not item.edi_element_number:
+                continue
+            
+            # Create key from EDI combination
+            edi_key = (
+                item.edi_segment,
+                item.edi_element_number,
+                item.edi_qualifier or ""  # Use empty string if qualifier is None
+            )
+            
+            if edi_key not in edi_combination_indices:
+                edi_combination_indices[edi_key] = []
+            edi_combination_indices[edi_key].append(idx)
+        
+        # Second pass: add sequential numbers to duplicates
+        for edi_key, indices in edi_combination_indices.items():
+            # Only process if there are duplicates (more than one occurrence)
+            if len(indices) > 1:
+                # Sort indices to process in order
+                indices.sort()
+                
+                # First occurrence keeps original tli_tag_850
+                # Subsequent occurrences get sequential numbers appended
+                for seq_num, idx in enumerate(indices[1:], start=2):
+                    item = items[idx]
+                    if item.tli_tag_850:
+                        item.tli_tag_850 = f"{item.tli_tag_850}{seq_num}"
     
     def _get_cell_value(self, sheet, row: int, col: int) -> Optional[str]:
         """Get cell value as string"""

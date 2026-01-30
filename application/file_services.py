@@ -89,7 +89,8 @@ class OutputFileWriter:
     @staticmethod
     def clear_output_directory(output_dir: Path) -> Optional[str]:
         """
-        Clear all files from output directory
+        Clear all files from output directory.
+        Creates the directory if it doesn't exist.
 
         Args:
             output_dir: Path to output directory
@@ -98,6 +99,10 @@ class OutputFileWriter:
             Error message if any, None otherwise
         """
         try:
+            # Create directory if it doesn't exist
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Clear all files and subdirectories
             for file_path in output_dir.iterdir():
                 if file_path.is_file():
                     file_path.unlink()

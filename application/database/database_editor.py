@@ -101,7 +101,7 @@ class ItemPropertiesEditor(QDialog):
             self._t("TLI_value"),
             self._t("850_RSX_tag"),
             self._t("850_TLI_tag"),
-            self._t("sourcing_group_id"),
+            self._t("sourcing_group"),
             self._t("is_on_detail_level"),
             self._t("is_partnumber"),
             self._t("855_RSX_path"),
@@ -161,7 +161,7 @@ class ItemPropertiesEditor(QDialog):
             "ID",
             self._t("populate_method_name"),
             self._t("map_name"),
-            self._t("call_method_path"),
+            self._t("order_path"),
             self._t("call_method_java_code"),
         ])
         self.sourcing_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -259,9 +259,12 @@ class ItemPropertiesEditor(QDialog):
             item2 = QTableWidgetItem(group["map_name"])
             item2.setToolTip(self._t("db_desc_map_name"))
             self.sourcing_table.setItem(row, 2, item2)
-            call_method_path = group.get("order_path", group.get("call_method_path", ""))
-            item3 = QTableWidgetItem(call_method_path)
-            item3.setToolTip(self._t("db_desc_call_method_path"))
+            # Display order_path as "ID: order_path"
+            order_path_id = group.get("order_path_properties_id", "?")
+            order_path = group.get("order_path", "")
+            order_path_display = f"{order_path_id}: {order_path}"
+            item3 = QTableWidgetItem(order_path_display)
+            item3.setToolTip(self._t("db_desc_order_path"))
             self.sourcing_table.setItem(row, 3, item3)
             call_method_java_code = group.get("call_method_java_code", "")
             # Truncate for display
@@ -345,7 +348,9 @@ class ItemPropertiesEditor(QDialog):
             item8 = QTableWidgetItem(item["850_TLI_tag"])
             item8.setToolTip(self._t("db_desc_850_TLI_tag"))
             self.items_table.setItem(row, 8, item8)
-            item9 = QTableWidgetItem(str(item["sourcing_group_properties_id"]))
+            # Display sourcing group as "ID: map_name"
+            sourcing_group_display = f"{item['sourcing_group_properties_id']}: {item.get('map_name', '')}"
+            item9 = QTableWidgetItem(sourcing_group_display)
             item9.setToolTip(self._t("db_desc_sourcing_group_id"))
             self.items_table.setItem(row, 9, item9)
             item10 = QTableWidgetItem("Yes" if item["is_on_detail_level"] else "No")
@@ -591,6 +596,13 @@ class SourcingGroupDialog(QDialog):
         )
         self.setMinimumWidth(600)
         self.create_ui()
+        # Increase width by 50% after UI is created
+        self.adjustSize()  # Get natural size based on content
+        current_width = self.width()
+        if current_width > 0:
+            self.resize(int(current_width * 1.5), self.height())
+            # Also update minimum width to maintain the increased size
+            self.setMinimumWidth(int(current_width * 1.5))
 
     def _t(self, key: str) -> str:
         """Get translation"""
@@ -739,6 +751,16 @@ class ItemDialog(QDialog):
         self.setWindowTitle(self._t("edit_item") if item_data else self._t("add_item"))
         self.setMinimumWidth(600)
         self.create_ui()
+        # Increase size after UI is created
+        self.adjustSize()  # Get natural size based on content
+        current_height = self.height()
+        current_width = self.width()
+        if current_height > 0 and current_width > 0:
+            # Increase height by 40% and width by 50%
+            self.resize(int(current_width * 1.5), int(current_height * 1.4))
+            # Also update minimum size to maintain the increased size
+            self.setMinimumHeight(int(current_height * 1.4))
+            self.setMinimumWidth(int(current_width * 1.5))
 
     def _t(self, key: str) -> str:
         """Get translation"""
@@ -1079,6 +1101,13 @@ class OrderPathDialog(QDialog):
         )
         self.setMinimumWidth(600)
         self.create_ui()
+        # Increase width by 50% after UI is created
+        self.adjustSize()  # Get natural size based on content
+        current_width = self.width()
+        if current_width > 0:
+            self.resize(int(current_width * 1.5), self.height())
+            # Also update minimum width to maintain the increased size
+            self.setMinimumWidth(int(current_width * 1.5))
 
     def _t(self, key: str) -> str:
         """Get translation"""
